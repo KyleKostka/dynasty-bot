@@ -40,24 +40,21 @@ export default async function handler(req, res) {
       const userId = body.member?.user?.id;
       const have = new Set(body.member?.roles || []);
       const values = body.data?.values || [];
-      const lines = [];
       for (const roleId of values) {
         const had = have.has(roleId);
         const url = `https://discord.com/api/v10/guilds/${GUILD_ID}/members/${userId}/roles/${roleId}`;
-        const r = await fetch(url, {
+        await fetch(url, {
           method: had ? "DELETE" : "PUT",
           headers: { Authorization: `Bot ${BOT_TOKEN}`, "X-Audit-Log-Reason": "Team picker" }
         });
-        if (r.ok) lines.push(`${had ? "❌ Removed" : "✅ Added"} <@&${roleId}>`);
-        else lines.push(`⚠️ Couldn't update <@&${roleId}> (check my role position).`);
       }
-      res.status(200).json({ type: 4, data: { flags: 64, content: lines.join("\n") || "No change." } });
+      // Re-render the message so the dropdown resets (drops the selection) and is reusable.
+      res.status(200).json({ type: 7, data: { content: body.message.content, components: body.message.components } });
     } catch (e) {
-      res.status(200).json({ type: 4, data: { flags: 64, content: "Something went wrong, try again." } });
+      res.status(200).json({ type: 7, data: { content: body.message?.content, components: body.message?.components } });
     }
     return;
   }
 
   res.status(200).json({ type: 4, data: { flags: 64, content: "Unsupported interaction." } });
 }
-
