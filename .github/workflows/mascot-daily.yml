@@ -1,0 +1,19 @@
+name: Daily Guess the Mascot
+
+# Posts the daily mascot game (and reveals yesterday's answer).
+# Runs once a day; also runnable on-demand from the Actions tab.
+on:
+  schedule:
+    - cron: "0 14 * * *"   # 14:00 UTC ≈ 9:00am Central
+  workflow_dispatch: {}
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily mascot endpoint
+        run: |
+          code=$(curl -s -o /tmp/out.txt -w "%{http_code}" "${{ secrets.MASCOT_CRON_URL }}")
+          echo "HTTP $code"
+          cat /tmp/out.txt
+          test "$code" = "200"
