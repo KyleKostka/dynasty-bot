@@ -74,6 +74,11 @@
   .slot .sc{font-size:11px; color:var(--muted)}
   .slot.empty .nm{color:var(--muted); font-weight:500; font-size:12.5px}
   .slot.active{border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+  .slot.pick{border-color:var(--accent2); background:color-mix(in srgb,var(--accent2) 12%,var(--panel)); cursor:pointer}
+  .slot.pick .nm{color:var(--accent2); font-weight:700}
+  .placehint{font-size:12.5px; color:var(--muted); text-align:center; margin:4px 0 2px}
+  .morerow{font-size:12px; color:var(--muted); text-align:center; margin-top:8px; opacity:.8}
+  .opts{max-height:48vh; overflow-y:auto}
   .rt{margin-left:auto; font-size:11px; font-weight:800; padding:1px 6px; border-radius:6px; background:var(--panel2)}
 
   .draw{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow:var(--shadow)}
@@ -180,9 +185,9 @@ function spin(){
   if(!pool.length){ return null; }
   const school=pool[Math.floor(Math.random()*pool.length)];
   const open=openSlots();
-  const opts=PLAYERS.filter(p=>p.s===school && open.some(s=>s.accepts.includes(p.p)))
-                    .sort((a,b)=>b.r-a.r).slice(0,6);
-  return {school,opts};
+  const all=PLAYERS.filter(p=>p.s===school);
+  const opts=all.filter(p=>open.some(s=>s.accepts.includes(p.p))).sort((a,b)=>b.r-a.r);
+  return {school, opts, total:all.length, more:all.length-opts.length};
 }
 
 // ---- screens ----
@@ -206,43 +211,64 @@ function home(){
   document.getElementById("play").onclick=()=>{ state.draw=spin(); state.round=1; draft(); };
 }
 
+function eligibleSlotsFor(player){ return openSlots().filter(s=>s.accepts.includes(player.p)); }
 function draft(){
   const filled=SLOTS.filter(s=>state.slots[s.key]).length;
-  const d=state.draw;
+  const d=state.draw; const pend=state.pending;
   app.innerHTML=`
    <div class="screen">
      <div class="hdr"><h2>Your Lineup</h2><span class="pill">${state.mode==='expert'?'Expert':'Classic'} · pick ${Math.min(filled+1,11)}/11</span></div>
      <div class="prog"><i style="width:${filled/11*100}%"></i></div>
      <div class="board">${SLOTS.map(s=>slotCard(s)).join("")}</div>
-     ${d?drawCard(d):`<div class="draw"><div class="drawhd"><div class="who">No eligible school left — </div></div></div>`}
+     ${pend?placeCard(pend):(d?drawCard(d):`<div class="draw"><div class="drawhd"><div class="who">No eligible school left.</div></div></div>`)}
    </div>`;
-  if(d){
-    app.querySelectorAll(".opt").forEach((el,i)=>el.onclick=()=>pick(d.school,d.opts[i]));
+  if(pend){
+    eligibleSlotsFor(pend.player).forEach(s=>{ const el=document.getElementById("slot-"+s.key); if(el) el.onclick=()=>placeInSlot(s.key); });
+    const c=document.getElementById("cancelpend"); if(c) c.onclick=()=>{ state.pending=null; draft(); };
+  } else if(d){
+    app.querySelectorAll(".opt").forEach((el,i)=>el.onclick=()=>choosePlayer(d.school,d.opts[i]));
     const sk=document.getElementById("skip"); if(sk) sk.onclick=()=>{ state.draw=spin(); draft(); };
   }
 }
 function slotCard(s){
   const p=state.slots[s.key];
-  const open=openSlots(); const isActive=state.draw && state.draw.opts.some(o=>open.find(x=>x.key===s.key&&x.accepts.includes(o.p)));
+  const pend=state.pending;
+  const selectable = pend && s.accepts.includes(pend.player.p) && !state.slots[s.key];
   if(p) return `<div class="slot full"><span class="pos">${s.label}</span><div style="display:flex;align-items:center"><span class="nm">${p.n}</span><span class="rt">${state.mode==='expert'?'•':p.r}</span></div><span class="sc">${p.s}</span></div>`;
-  return `<div class="slot empty ${isActive?'active':''}"><span class="pos">${s.label}</span><span class="nm">—</span></div>`;
+  const active = !pend && state.draw && state.draw.opts.some(o=>openSlots().find(x=>x.key===s.key&&x.accepts.includes(o.p)));
+  return `<div class="slot empty ${selectable?'pick':active?'active':''}" id="slot-${s.key}">
+     <span class="pos">${s.label}</span><span class="nm">${selectable?'tap to place ›':'—'}</span></div>`;
 }
 function drawCard(d){
   return `<div class="draw spin">
-     <div class="drawhd"><div class="logo">${logo(d.school)}</div><div><div class="who">You drew</div><div class="sch">${d.school}</div></div></div>
+     <div class="drawhd"><div class="logo">${logo(d.school)}</div><div><div class="who">You drew · ${d.total} players</div><div class="sch">${d.school}</div></div></div>
      <div class="opts">${d.opts.map(o=>`
        <button class="opt"><span class="posbadge">${o.p}</span><div><div class="pn">${o.n}</div><div class="pe">${o.e}</div></div><span class="pr ${state.mode==='expert'?'hid':''}">${state.mode==='expert'?'?':o.r}</span></button>`).join("")}
      </div>
+     ${d.more?`<div class="morerow">+${d.more} more on the roster</div>`:""}
      <button class="skip" id="skip">↻ Re-spin (skip this school)</button>
    </div>`;
 }
-function pick(school,player){
-  // place into best open slot this player fits (prefer exact pos over flex)
-  const open=openSlots();
-  let slot=open.find(s=>s.key!=="FLEX"&&s.accepts.includes(player.p)) || open.find(s=>s.accepts.includes(player.p));
-  if(!slot) return;
-  state.slots[slot.key]={...player};
-  state.used.add(school);
+function placeCard(pend){
+  const elig=eligibleSlotsFor(pend.player);
+  return `<div class="draw spin">
+     <div class="drawhd"><div class="logo">${logo(pend.school)}</div><div><div class="who">Place this player at…</div><div class="sch">${pend.player.n} · ${pend.player.p}</div></div></div>
+     <div class="placehint">Tap a highlighted slot above ${elig.length>1?`(${elig.map(s=>s.label).join(" / ")})`:""}</div>
+     <button class="skip" id="cancelpend">← Back to ${pend.school}</button>
+   </div>`;
+}
+function choosePlayer(school,player){
+  const elig=eligibleSlotsFor(player);
+  if(elig.length===0) return;
+  if(elig.length===1){ state.pending={school,player}; return placeInSlot(elig[0].key); }
+  state.pending={school,player}; draft();
+}
+function placeInSlot(slotKey){
+  const pend=state.pending; if(!pend) return;
+  if(state.slots[slotKey]) return;
+  state.slots[slotKey]={...pend.player};
+  state.used.add(pend.school);
+  state.pending=null;
   if(SLOTS.every(s=>state.slots[s.key])){ return result(); }
   state.draw=spin(); state.round++; draft();
 }

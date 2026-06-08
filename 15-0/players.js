@@ -394,4 +394,46 @@ export const PLAYERS = [
   { n: "Jerry Rice", s: "Mississippi Valley State", p: "WR", e: "1980s", r: 95 },
   { n: "Walter Payton", s: "Jackson State", p: "RB", e: "1970s", r: 95 },
   { n: "Steve McNair", s: "Alcorn State", p: "QB", e: "1990s", r: 88 },
+
+  // ===== DEPTH PASS — fuller rosters for smaller / one-off programs =====
+  // San Diego State
+  { n: "Brian Sipe", s: "San Diego State", p: "QB", e: "1970s", r: 80 },
+  { n: "Rashaad Penny", s: "San Diego State", p: "RB", e: "2010s", r: 82 },
+  { n: "Donnel Pumphrey", s: "San Diego State", p: "RB", e: "2010s", r: 80 },
+  { n: "Az-Zahir Hakim", s: "San Diego State", p: "WR", e: "1990s", r: 78 },
+  { n: "Kabeer Gbaja-Biamila", s: "San Diego State", p: "EDGE", e: "1990s", r: 80 },
+  { n: "Luis Castillo", s: "San Diego State", p: "DT", e: "2000s", r: 78 },
+  { n: "Leon McFadden", s: "San Diego State", p: "CB", e: "2010s", r: 72 },
+  // Fresno State
+  { n: "David Carr", s: "Fresno State", p: "QB", e: "2000s", r: 81 },
+  { n: "Trent Dilfer", s: "Fresno State", p: "QB", e: "1990s", r: 80 },
+  { n: "Ryan Mathews", s: "Fresno State", p: "RB", e: "2000s", r: 80 },
+  { n: "Henry Ellard", s: "Fresno State", p: "WR", e: "1980s", r: 82 },
+  { n: "Logan Mankins", s: "Fresno State", p: "DT", e: "2000s", r: 78 },
+  // Houston
+  { n: "Ed Oliver", s: "Houston", p: "DT", e: "2010s", r: 88 },
+  { n: "Wilson Whitley", s: "Houston", p: "DT", e: "1970s", r: 80 },
+  { n: "Elandon Roberts", s: "Houston", p: "LB", e: "2010s", r: 74 },
+  { n: "Greg Ward Jr.", s: "Houston", p: "WR", e: "2010s", r: 74 },
+  // BYU
+  { n: "Robbie Bosco", s: "BYU", p: "QB", e: "1980s", r: 80 },
+  { n: "Jamaal Williams", s: "BYU", p: "RB", e: "2010s", r: 80 },
+  { n: "Dennis Pitta", s: "BYU", p: "TE", e: "2000s", r: 79 },
+  { n: "Ezekiel Ansah", s: "BYU", p: "EDGE", e: "2010s", r: 82 },
+  { n: "Daniel Sorensen", s: "BYU", p: "S", e: "2010s", r: 72 },
+  // Boise State
+  { n: "Jay Ajayi", s: "Boise State", p: "RB", e: "2010s", r: 82 },
+  { n: "Leighton Vander Esch", s: "Boise State", p: "LB", e: "2010s", r: 82 },
+  { n: "DeMarcus Lawrence", s: "Boise State", p: "EDGE", e: "2010s", r: 84 },
+  { n: "Titus Young", s: "Boise State", p: "WR", e: "2010s", r: 74 },
+  { n: "Orlando Scandrick", s: "Boise State", p: "CB", e: "2000s", r: 72 },
+  // Marshall
+  { n: "Ahmad Bradshaw", s: "Marshall", p: "RB", e: "2000s", r: 80 },
+  { n: "Troy Brown", s: "Marshall", p: "WR", e: "1990s", r: 80 },
+  { n: "Doug Chapman", s: "Marshall", p: "RB", e: "1990s", r: 72 },
+  // Hawaii
+  { n: "Davone Bess", s: "Hawaii", p: "WR", e: "2000s", r: 76 },
+  { n: "Ashley Lelie", s: "Hawaii", p: "WR", e: "2000s", r: 78 },
+  // Southern Miss
+  { n: "Ito Smith", s: "Southern Miss", p: "RB", e: "2010s", r: 74 },
 ];
