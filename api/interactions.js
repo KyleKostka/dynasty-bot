@@ -3,187 +3,214 @@ import nacl from "tweetnacl";
 export const config = { api: { bodyParser: false } };
 
 const PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY;
-const BOT_TOKEN  = process.env.DISCORD_BOT_TOKEN;
-const GUILD_ID   = process.env.GUILD_ID;
-const SB_URL     = process.env.SUPABASE_URL;
-const SB_KEY     = process.env.SUPABASE_SERVICE_KEY;
-const BASE       = "https://dynasty-team-picker.vercel.app";
-const SIL = (id) => `${BASE}/api/games/silhouette?id=${id}`;
+const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const GUILD_ID = process.env.GUILD_ID;
+const SB_URL = process.env.SUPABASE_URL;
+const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
+// Channel the advance tracker posts to (defaults to #advance-tracker).
+const ADVANCE_CHANNEL_ID = process.env.ADVANCE_CHANNEL_ID || "1512576539181449316";
+// Only auto-advance once at least this many coaches are registered (guards setup).
+const MIN_COACHES_FOR_AUTO = 2;
 
-const FBS_NAMES = ["Alabama","Arkansas","Auburn","Florida","Georgia","Kentucky","LSU","Mississippi State","Missouri","Oklahoma","Ole Miss","South Carolina","Tennessee","Texas","Texas A&M","Vanderbilt","Illinois","Indiana","Iowa","Maryland","Michigan","Michigan State","Minnesota","Nebraska","Northwestern","Ohio State","Oregon","Penn State","Purdue","Rutgers","UCLA","USC","Washington","Wisconsin","Arizona","Arizona State","Baylor","BYU","Cincinnati","Colorado","Houston","Iowa State","Kansas","Kansas State","Oklahoma State","TCU","Texas Tech","UCF","Utah","West Virginia","Boston College","California","Clemson","Duke","Florida State","Georgia Tech","Louisville","Miami","NC State","North Carolina","Pittsburgh","SMU","Stanford","Syracuse","Virginia","Virginia Tech","Wake Forest","Oregon State","Washington State","Boise State","Colorado State","Fresno State","San Diego State","Utah State","Texas State","Army","Charlotte","East Carolina","Florida Atlantic","Liberty","Memphis","Navy","North Texas","Rice","Sam Houston","South Florida","Temple","Tulane","Tulsa","UAB","UTSA","Air Force","Hawaii","Nevada","New Mexico","North Dakota State","Northern Illinois","San Jose State","UNLV","UTEP","Wyoming","Akron","Ball State","Bowling Green","Buffalo","Central Michigan","Eastern Michigan","Kent State","Massachusetts","Miami (OH)","Middle Tennessee","Ohio","Sacramento State","Toledo","Western Kentucky","Western Michigan","Appalachian State","Arkansas State","Coastal Carolina","Georgia Southern","Georgia State","James Madison","Louisiana","UL Monroe","Marshall","Old Dominion","South Alabama","Southern Miss","Troy","Delaware","FIU","Jacksonville State","Kennesaw State","Lamar","Louisiana Tech","McNeese","Missouri State","New Mexico State","Notre Dame","UConn"];
-const ALIASES = { "Ole Miss":"Mississippi", "UConn":"Connecticut", "FIU":"Florida International", "Hawaii":"Hawai'i", "App State":"Appalachian State", "UL Monroe":"Louisiana Monroe", "Southern Miss":"Southern Mississippi" };
+const DISCORD = "https://discord.com/api/v10";
 
+// ---------- low-level helpers ----------
 async function readRaw(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   return Buffer.concat(chunks).toString("utf8");
 }
 const sb = (path, init = {}) =>
-  fetch(`${SB_URL}/rest/v1/${path}`, { ...init, headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", ...(init.headers || {}) } });
-
+  fetch(`${SB_URL}/rest/v1/${path}`, {
+    ...init,
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", ...(init.headers || {}) },
+  });
+const reply = (res, data) => res.status(200).json({ type: 4, data });
 const ephemeral = (res, data) => res.status(200).json({ type: 4, data: { flags: 64, ...data } });
-const update = (res, data) => res.status(200).json({ type: 7, data });
 const userOf = (b) => b.member?.user || b.user || {};
-const rand = () => Math.floor(Math.random() * 1e9);
-function shuffle(arr, seed) { const a = arr.slice(); let s = seed >>> 0; const rng = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-const norm = (s) => (s||"").normalize("NFKD").replace(/[^a-zA-Z0-9]/g,"").toLowerCase();
-async function loadSchools() {
-  const r = await sb("dyn_schools?select=name,espn&limit=300");
+const botHeaders = { Authorization: `Bot ${BOT_TOKEN}`, "Content-Type": "application/json" };
+const postChannel = (channelId, payload) =>
+  fetch(`${DISCORD}/channels/${channelId}/messages`, { method: "POST", headers: botHeaders, body: JSON.stringify(payload) });
+
+// commissioner = server admin OR member with a role named "Commissioner"
+async function isCommish(body) {
+  try {
+    const perms = BigInt(body.member?.permissions || "0");
+    if (perms & 8n) return true; // ADMINISTRATOR
+    const roles = body.member?.roles || [];
+    if (!roles.length) return false;
+    const r = await fetch(`${DISCORD}/guilds/${GUILD_ID}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } });
+    if (!r.ok) return false;
+    const all = await r.json();
+    const commish = new Set(all.filter((x) => (x.name || "").toLowerCase() === "commissioner").map((x) => x.id));
+    return roles.some((rid) => commish.has(rid));
+  } catch { return false; }
+}
+
+// ---------- league data ----------
+async function getLeague() {
+  const r = await sb("dyn_league?id=eq.1&select=season,current_week");
+  const rows = r.ok ? await r.json() : [];
+  return rows[0] || { season: 2027, current_week: 1 };
+}
+async function activeCoaches() {
+  const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team");
   return r.ok ? await r.json() : [];
 }
-
-// ---------- Guess the Mascot ----------
-async function getMRound(date) {
-  const r = await sb(`dyn_mascot_rounds?round_date=eq.${date}&select=answer,espn,options`);
-  const rows = r.ok ? await r.json() : []; return rows[0] || null;
+async function advancesFor(season, week) {
+  const r = await sb(`dyn_advances?season=eq.${season}&week=eq.${week}&select=user_id,username`);
+  return r.ok ? await r.json() : [];
 }
-async function handleStart(res, body) {
-  const [, date] = body.data.custom_id.split("|");
+async function setWeek(week) {
+  await sb("dyn_league?id=eq.1", { method: "PATCH", body: JSON.stringify({ current_week: week, updated_at: new Date().toISOString() }) });
+}
+
+// ---------- slash commands ----------
+async function cmdDone(res, body) {
   const u = userOf(body);
-  const round = await getMRound(date);
-  if (!round) return ephemeral(res, { content: "That round isn't available anymore." });
-  await sb("dyn_mascot_starts?on_conflict=round_date,user_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates" }, body: JSON.stringify({ round_date: date, user_id: u.id }) });
-  const opts = round.options || [];
-  const guessRow = { type: 1, components: opts.map((name) => ({ type: 2, style: 1, label: name, custom_id: `mguess|${date}|${name}` })) };
-  const hintRow = { type: 1, components: [{ type: 2, style: 2, label: "💡 Hint", custom_id: `mhint|${date}` }] };
-  return ephemeral(res, { content: "⏱️ **Your clock is running!** Which school's logo is this?", embeds: [{ image: { url: SIL(round.espn) }, color: 13770518 }], components: [guessRow, hintRow] });
-}
-async function handleGuess(res, body) {
-  const [, date, guess] = body.data.custom_id.split("|");
-  const u = userOf(body); const username = u.global_name || u.username || "someone";
-  const round = await getMRound(date);
-  if (!round) return ephemeral(res, { content: "That round isn't available anymore." });
-  const sr = await sb(`dyn_mascot_starts?round_date=eq.${date}&user_id=eq.${u.id}&select=started_at`);
-  const startRows = sr.ok ? await sr.json() : [];
-  const startedAt = startRows[0]?.started_at ? new Date(startRows[0].started_at).getTime() : Date.now();
-  const elapsed = Math.max(0, Date.now() - startedAt);
-  const correct = guess === round.answer;
-  const ins = await sb("dyn_mascot_guesses", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ round_date: date, user_id: u.id, username, guess, correct, elapsed_ms: elapsed }) });
-  if (ins.status === 409) return ephemeral(res, { content: "🔒 You already locked in a guess for today." });
-  if (!ins.ok) return ephemeral(res, { content: "Couldn't record your guess — try again." });
-  const secs = (elapsed / 1000).toFixed(1);
-  return ephemeral(res, { content: correct ? `✅ **Correct in ${secs}s!** 🏆 Answer reveals tomorrow.` : `❌ **${guess}** isn't it. Locked in at ${secs}s. Answer reveals tomorrow.` });
-}
-async function handleHint(res, body) {
-  const [, date] = body.data.custom_id.split("|");
-  const round = await getMRound(date);
-  if (!round) return ephemeral(res, { content: "That round isn't available anymore." });
-  const a = round.answer || "";
-  return ephemeral(res, { content: `💡 Starts with **${a[0]?.toUpperCase() || "?"}** · ${a.replace(/[^A-Za-z]/g, "").length} letters` });
-}
+  const username = u.global_name || u.username || "coach";
+  const lg = await getLeague();
 
-// ---------- CFB Trivia ----------
-async function handleTrivia(res, body) {
-  const [, date, idxStr] = body.data.custom_id.split("|");
-  const idx = Number(idxStr);
-  const u = userOf(body); const username = u.global_name || u.username || "someone";
-  const r = await sb(`dyn_trivia_rounds?round_date=eq.${date}&select=correct_idx,answer`);
-  const rows = r.ok ? await r.json() : [];
-  if (!rows.length) return ephemeral(res, { content: "That question isn't available anymore." });
-  const correct = idx === rows[0].correct_idx;
-  const ins = await sb("dyn_trivia_guesses", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ round_date: date, user_id: u.id, username, choice: idx, correct }) });
-  if (ins.status === 409) return ephemeral(res, { content: "🔒 You already answered today's trivia." });
-  if (!ins.ok) return ephemeral(res, { content: "Couldn't record your answer — try again." });
-  return ephemeral(res, { content: correct ? "✅ **Correct!** Nice. (Full answer reveals tomorrow.)" : "❌ Not quite — locked in. Answer reveals tomorrow." });
-}
+  // make sure the caller is on the roster (don't clobber an existing team)
+  await sb("dyn_coaches?on_conflict=user_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates" },
+    body: JSON.stringify({ user_id: u.id, username, active: true }),
+  });
 
-// ---------- CFB 13-0 Run (logo streak) ----------
-function buildRounds(schools) {
-  const order = shuffle(schools, rand());
-  const rounds = [];
-  for (let i = 0; i < 13; i++) {
-    const answer = order[i];
-    const decoys = shuffle(schools.filter(s => s.name !== answer.name), rand()).slice(0, 3);
-    const opts = shuffle([answer, ...decoys], rand());
-    rounds.push({ espn: answer.espn, name: answer.name, options: opts.map(o => o.name), correctIdx: opts.findIndex(o => o.name === answer.name) });
+  const ins = await sb("dyn_advances", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ season: lg.season, week: lg.current_week, user_id: u.id, username }),
+  });
+  if (ins.status === 409) return ephemeral(res, { content: `You've already advanced **Week ${lg.current_week}**. ✅` });
+  if (!ins.ok) return ephemeral(res, { content: "Couldn't record that — try again." });
+
+  const coaches = await activeCoaches();
+  const done = await advancesFor(lg.season, lg.current_week);
+  const total = coaches.length || done.length;
+  const doneCount = done.length;
+
+  if (total >= MIN_COACHES_FOR_AUTO && doneCount >= total) {
+    const list = done.map((d) => d.username || "coach").join(", ");
+    const next = lg.current_week + 1;
+    await postChannel(ADVANCE_CHANNEL_ID, {
+      content: `🏁 **Week ${lg.current_week} complete!** All ${total} coaches are in (${list}).\n⏭️ The league is now on **Week ${next}** — play your games and run \`/done\`. Good luck. 🏈`,
+    });
+    await setWeek(next);
+    return reply(res, { content: `✅ You were the last one in — **Week ${lg.current_week} is done!** League advanced to **Week ${next}**. 🎉` });
   }
-  return rounds;
+
+  return reply(res, { content: `✅ **${username}** advanced **Week ${lg.current_week}** — ${doneCount}/${total} in.` });
 }
-function roundView(run) {
-  const r = run.rounds[run.step];
-  return {
-    content: `🏈 **CFB 13-0 Run** — **${run.streak}-0** so far. Which team is this? (${run.step + 1}/13)`,
-    embeds: [{ image: { url: SIL(r.espn) }, color: 13770518 }],
-    components: [{ type: 1, components: r.options.map((name, i) => ({ type: 2, style: 1, label: name, custom_id: `p13a|${run.step}|${i}` })) }],
-  };
+
+async function cmdStatus(res, body) {
+  const lg = await getLeague();
+  const coaches = await activeCoaches();
+  const done = await advancesFor(lg.season, lg.current_week);
+  const doneIds = new Set(done.map((d) => d.user_id));
+  const doneList = done.map((d) => `✅ ${d.username || "coach"}`);
+  const pending = coaches.filter((c) => !doneIds.has(c.user_id)).map((c) => `⏳ ${c.username || c.user_id}`);
+  const total = coaches.length || done.length;
+  const lines = [...doneList, ...pending].join("\n") || "_No coaches registered yet — pick a team or run `/done`._";
+  return reply(res, { content: `📋 **Week ${lg.current_week}** — ${done.length}/${total} advanced\n${lines}` });
 }
-async function handlePlayStart(res, body) {
-  const u = userOf(body); const username = u.global_name || u.username || "someone";
-  const schools = await loadSchools();
-  if (schools.length < 20) return ephemeral(res, { content: "Couldn't load schools — try again." });
-  const run = { step: 0, streak: 0, rounds: buildRounds(schools) };
-  await sb("dyn_1300_runs?on_conflict=user_id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ user_id: u.id, username, current_streak: 0, current_q: run, updated_at: new Date().toISOString() }) });
-  return ephemeral(res, roundView(run));
+
+async function cmdAdvance(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Only commissioners can advance the league." });
+  const lg = await getLeague();
+  const next = lg.current_week + 1;
+  await setWeek(next);
+  await postChannel(ADVANCE_CHANNEL_ID, {
+    content: `⏭️ A commissioner advanced the league to **Week ${next}**. Play your games and run \`/done\`.`,
+  });
+  return ephemeral(res, { content: `Advanced to **Week ${next}**.` });
 }
-async function handlePlayAnswer(res, body) {
-  const [, , idxStr] = body.data.custom_id.split("|");
-  const optIdx = Number(idxStr);
-  const u = userOf(body); const username = u.global_name || u.username || "someone";
-  const r = await sb(`dyn_1300_runs?user_id=eq.${u.id}&select=current_q,best_streak`);
+
+async function cmdWeek(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const opt = (body.data.options || []).find((o) => o.name === "number");
+  const wk = opt ? Number(opt.value) : null;
+  if (!wk || wk < 1) return ephemeral(res, { content: "Provide a valid week number." });
+  await setWeek(wk);
+  return ephemeral(res, { content: `Set current week to **${wk}**.` });
+}
+
+async function cmdMyteam(res, body) {
+  const u = userOf(body);
+  const r = await sb(`dyn_coaches?user_id=eq.${u.id}&select=team`);
   const rows = r.ok ? await r.json() : [];
-  if (!rows.length || !rows[0].current_q) return update(res, { content: "That run has ended. Tap ▶ Play to start a new one.", embeds: [], components: [] });
-  const run = rows[0].current_q; const best = rows[0].best_streak || 0;
-  const round = run.rounds[run.step];
-  const correct = optIdx === round.correctIdx;
-  if (correct) {
-    run.streak += 1; run.step += 1;
-    if (run.step >= 13) {
-      const nb = Math.max(best, run.streak);
-      await sb(`dyn_1300_runs?user_id=eq.${u.id}`, { method: "PATCH", body: JSON.stringify({ username, best_streak: nb, current_streak: 0, current_q: null }) });
-      return update(res, { content: `🏆 **13-0! UNDEFEATED CHAMPION!** ${username} ran the table. National title secured. 🎉`, embeds: [], components: [] });
+  const team = rows[0]?.team;
+  return ephemeral(res, { content: team ? `Your team: **${team}**` : "You haven't picked a team yet — use the dropdowns in the team-picker channel." });
+}
+
+// ---------- team picker (select menu) ----------
+async function handleTeamPick(res, body) {
+  try {
+    const userId = body.member?.user?.id;
+    const username = body.member?.user?.global_name || body.member?.user?.username;
+    const have = new Set(body.member?.roles || []);
+    const values = body.data?.values || [];
+    const labelFor = (val) => {
+      for (const row of body.message?.components || [])
+        for (const c of row.components || [])
+          if (c.type === 3) for (const o of c.options || []) if (o.value === val) return o.label;
+      return null;
+    };
+    for (const roleId of values) {
+      const had = have.has(roleId);
+      await fetch(`${DISCORD}/guilds/${GUILD_ID}/members/${userId}/roles/${roleId}`, {
+        method: had ? "DELETE" : "PUT",
+        headers: { Authorization: `Bot ${BOT_TOKEN}`, "X-Audit-Log-Reason": "Team picker" },
+      });
+      if (!had) {
+        await sb("dyn_coaches?on_conflict=user_id", {
+          method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify({ user_id: userId, username, team: labelFor(roleId) || roleId, active: true }),
+        });
+      }
     }
-    await sb(`dyn_1300_runs?user_id=eq.${u.id}`, { method: "PATCH", body: JSON.stringify({ current_streak: run.streak, current_q: run }) });
-    return update(res, roundView(run));
-  } else {
-    const nb = Math.max(best, run.streak);
-    await sb(`dyn_1300_runs?user_id=eq.${u.id}`, { method: "PATCH", body: JSON.stringify({ username, best_streak: nb, current_streak: 0, current_q: null }) });
-    return update(res, { content: `❌ **Loss!** That was **${round.name}**. Final record: **${run.streak}-1**. Your best: **${nb}-0**. Tap ▶ Play to run it back.`, embeds: [], components: [] });
-  }
-}
-async function handleLeaderboard(res) {
-  const r = await sb("dyn_1300_runs?order=best_streak.desc&limit=10&select=username,best_streak");
-  const rows = r.ok ? await r.json() : [];
-  const board = rows.filter(x => x.best_streak > 0).map((x, i) => `${i + 1}. **${x.username}** — ${x.best_streak}-0`).join("\n") || "No runs yet — be the first!";
-  return ephemeral(res, { content: `🏆 **13-0 Leaderboard**\n${board}` });
+  } catch { /* fall through to a safe update */ }
+  return res.status(200).json({ type: 7, data: { content: body.message.content, components: body.message.components } });
 }
 
+// ---------- entrypoint ----------
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).send("Method Not Allowed"); return; }
   const sig = req.headers["x-signature-ed25519"];
-  const ts  = req.headers["x-signature-timestamp"];
+  const ts = req.headers["x-signature-timestamp"];
   const raw = await readRaw(req);
   let valid = false;
-  try { valid = sig && ts && PUBLIC_KEY && nacl.sign.detached.verify(Buffer.from(ts + raw), Buffer.from(sig, "hex"), Buffer.from(PUBLIC_KEY, "hex")); } catch { valid = false; }
+  try {
+    valid = sig && ts && PUBLIC_KEY && nacl.sign.detached.verify(Buffer.from(ts + raw), Buffer.from(sig, "hex"), Buffer.from(PUBLIC_KEY, "hex"));
+  } catch { valid = false; }
   if (!valid) { res.status(401).send("invalid request signature"); return; }
 
   const body = JSON.parse(raw);
+
+  // PING
   if (body.type === 1) { res.status(200).json({ type: 1 }); return; }
 
-  if (body.type === 3) {
-    const cid = body.data?.custom_id || "";
+  // slash commands
+  if (body.type === 2) {
+    const name = body.data?.name;
     try {
-      if (cid.startsWith("mstart|")) return await handleStart(res, body);
-      if (cid.startsWith("mguess|")) return await handleGuess(res, body);
-      if (cid.startsWith("mhint|"))  return await handleHint(res, body);
-      if (cid.startsWith("tg|"))     return await handleTrivia(res, body);
-      if (cid === "p13s")            return await handlePlayStart(res, body);
-      if (cid.startsWith("p13a|"))   return await handlePlayAnswer(res, body);
-      if (cid === "p13lb")           return await handleLeaderboard(res);
-    } catch (e) { return ephemeral(res, { content: "Something went wrong: " + String(e).slice(0, 100) }); }
-
-    try {
-      const userId = body.member?.user?.id;
-      const have = new Set(body.member?.roles || []);
-      const values = body.data?.values || [];
-      for (const roleId of values) {
-        const had = have.has(roleId);
-        await fetch(`https://discord.com/api/v10/guilds/${GUILD_ID}/members/${userId}/roles/${roleId}`, { method: had ? "DELETE" : "PUT", headers: { Authorization: `Bot ${BOT_TOKEN}`, "X-Audit-Log-Reason": "Team picker" } });
-      }
-      res.status(200).json({ type: 7, data: { content: body.message.content, components: body.message.components } });
+      if (name === "done") return await cmdDone(res, body);
+      if (name === "status") return await cmdStatus(res, body);
+      if (name === "advance") return await cmdAdvance(res, body);
+      if (name === "week") return await cmdWeek(res, body);
+      if (name === "myteam") return await cmdMyteam(res, body);
     } catch (e) {
-      res.status(200).json({ type: 7, data: { content: body.message?.content, components: body.message?.components } });
+      return ephemeral(res, { content: "Something went wrong: " + String(e).slice(0, 150) });
     }
-    return;
+    return ephemeral(res, { content: "Unknown command." });
   }
+
+  // components (team picker select menu)
+  if (body.type === 3) {
+    return await handleTeamPick(res, body);
+  }
+
   res.status(200).json({ type: 4, data: { flags: 64, content: "Unsupported interaction." } });
 }
