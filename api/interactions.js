@@ -28,16 +28,8 @@ const rand = () => Math.floor(Math.random() * 1e9);
 function shuffle(arr, seed) { const a = arr.slice(); let s = seed >>> 0; const rng = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 const norm = (s) => (s||"").normalize("NFKD").replace(/[^a-zA-Z0-9]/g,"").toLowerCase();
 async function loadSchools() {
-  const j = await (await fetch("https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams?limit=400")).json();
-  const teams = j.sports[0].leagues[0].teams.map(t => t.team).filter(t => t.logos && t.logos[0]);
-  const idx = {};
-  for (const t of teams) { for (const k of [t.location, t.displayName, t.shortDisplayName]) if (k) idx[norm(k)] = idx[norm(k)] || t.id; }
-  const out = [];
-  for (const name of FBS_NAMES) {
-    let id = idx[norm(name)] || (ALIASES[name] && idx[norm(ALIASES[name])]);
-    if (id) out.push({ name, espn: id });
-  }
-  return out;
+  const r = await sb("dyn_schools?select=name,espn&limit=300");
+  return r.ok ? await r.json() : [];
 }
 
 // ---------- Guess the Mascot ----------
