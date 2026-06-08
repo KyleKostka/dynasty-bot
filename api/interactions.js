@@ -21,67 +21,64 @@ const sb = (path, init = {}) =>
 const ephemeral = (res, data) => res.status(200).json({ type: 4, data: { flags: 64, ...data } });
 const userOf = (b) => b.member?.user || b.user || {};
 
-async function getRound(date) {
+// ---------- Guess the Mascot ----------
+async function getMRound(date) {
   const r = await sb(`dyn_mascot_rounds?round_date=eq.${date}&select=answer,espn,options`);
   const rows = r.ok ? await r.json() : [];
   return rows[0] || null;
 }
-
-// ▶ Start — reveal silhouette + guess/hint buttons, start the player's clock
 async function handleStart(res, body) {
   const [, date] = body.data.custom_id.split("|");
   const u = userOf(body);
-  const round = await getRound(date);
+  const round = await getMRound(date);
   if (!round) return ephemeral(res, { content: "That round isn't available anymore." });
-  // record start once (ignore if already started -> keeps original time)
-  await sb("dyn_mascot_starts?on_conflict=round_date,user_id", {
-    method: "POST", headers: { Prefer: "resolution=ignore-duplicates" },
-    body: JSON.stringify({ round_date: date, user_id: u.id }),
-  });
+  await sb("dyn_mascot_starts?on_conflict=round_date,user_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates" }, body: JSON.stringify({ round_date: date, user_id: u.id }) });
   const opts = round.options || [];
   const guessRow = { type: 1, components: opts.map((name) => ({ type: 2, style: 1, label: name, custom_id: `mguess|${date}|${name}` })) };
   const hintRow = { type: 1, components: [{ type: 2, style: 2, label: "💡 Hint", custom_id: `mhint|${date}` }] };
-  return ephemeral(res, {
-    content: "⏱️ **Your clock is running!** Which school's logo is this?",
-    embeds: [{ image: { url: SIL(round.espn) }, color: 13770518 }],
-    components: [guessRow, hintRow],
-  });
+  return ephemeral(res, { content: "⏱️ **Your clock is running!** Which school's logo is this?", embeds: [{ image: { url: SIL(round.espn) }, color: 13770518 }], components: [guessRow, hintRow] });
 }
-
-// guess — measure elapsed from the player's start click, record, lock
 async function handleGuess(res, body) {
   const [, date, guess] = body.data.custom_id.split("|");
   const u = userOf(body);
   const username = u.global_name || u.username || "someone";
-  const round = await getRound(date);
+  const round = await getMRound(date);
   if (!round) return ephemeral(res, { content: "That round isn't available anymore." });
-
   const sr = await sb(`dyn_mascot_starts?round_date=eq.${date}&user_id=eq.${u.id}&select=started_at`);
   const startRows = sr.ok ? await sr.json() : [];
   const startedAt = startRows[0]?.started_at ? new Date(startRows[0].started_at).getTime() : Date.now();
   const elapsed = Math.max(0, Date.now() - startedAt);
   const correct = guess === round.answer;
-
-  const ins = await sb("dyn_mascot_guesses", {
-    method: "POST", headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ round_date: date, user_id: u.id, username, guess, correct, elapsed_ms: elapsed }),
-  });
+  const ins = await sb("dyn_mascot_guesses", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ round_date: date, user_id: u.id, username, guess, correct, elapsed_ms: elapsed }) });
   if (ins.status === 409) return ephemeral(res, { content: "🔒 You already locked in a guess for today." });
   if (!ins.ok) return ephemeral(res, { content: "Couldn't record your guess — try again." });
-
   const secs = (elapsed / 1000).toFixed(1);
-  return ephemeral(res, { content: correct
-    ? `✅ **Correct in ${secs}s!** 🏆 Answer reveals tomorrow — check the leaderboard then.`
-    : `❌ **${guess}** isn't it. Locked in at ${secs}s. Answer reveals tomorrow.` });
+  return ephemeral(res, { content: correct ? `✅ **Correct in ${secs}s!** 🏆 Answer reveals tomorrow — check the leaderboard then.` : `❌ **${guess}** isn't it. Locked in at ${secs}s. Answer reveals tomorrow.` });
 }
-
 async function handleHint(res, body) {
   const [, date] = body.data.custom_id.split("|");
-  const round = await getRound(date);
+  const round = await getMRound(date);
   if (!round) return ephemeral(res, { content: "That round isn't available anymore." });
   const a = round.answer || "";
   const letters = a.replace(/[^A-Za-z]/g, "").length;
   return ephemeral(res, { content: `💡 Starts with **${a[0]?.toUpperCase() || "?"}** · ${letters} letters` });
+}
+
+// ---------- CFB Trivia ----------
+async function handleTrivia(res, body) {
+  const [, date, idxStr] = body.data.custom_id.split("|");
+  const idx = Number(idxStr);
+  const u = userOf(body);
+  const username = u.global_name || u.username || "someone";
+  const r = await sb(`dyn_trivia_rounds?round_date=eq.${date}&select=correct_idx,answer`);
+  const rows = r.ok ? await r.json() : [];
+  if (!rows.length) return ephemeral(res, { content: "That question isn't available anymore." });
+  const round = rows[0];
+  const correct = idx === round.correct_idx;
+  const ins = await sb("dyn_trivia_guesses", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ round_date: date, user_id: u.id, username, choice: idx, correct }) });
+  if (ins.status === 409) return ephemeral(res, { content: "🔒 You already answered today's trivia." });
+  if (!ins.ok) return ephemeral(res, { content: "Couldn't record your answer — try again." });
+  return ephemeral(res, { content: correct ? `✅ **Correct!** Nice. (Full answer reveals tomorrow.)` : `❌ Not quite — locked in. Answer reveals tomorrow.` });
 }
 
 export default async function handler(req, res) {
@@ -90,9 +87,7 @@ export default async function handler(req, res) {
   const ts  = req.headers["x-signature-timestamp"];
   const raw = await readRaw(req);
   let valid = false;
-  try {
-    valid = sig && ts && PUBLIC_KEY && nacl.sign.detached.verify(Buffer.from(ts + raw), Buffer.from(sig, "hex"), Buffer.from(PUBLIC_KEY, "hex"));
-  } catch { valid = false; }
+  try { valid = sig && ts && PUBLIC_KEY && nacl.sign.detached.verify(Buffer.from(ts + raw), Buffer.from(sig, "hex"), Buffer.from(PUBLIC_KEY, "hex")); } catch { valid = false; }
   if (!valid) { res.status(401).send("invalid request signature"); return; }
 
   const body = JSON.parse(raw);
@@ -104,19 +99,16 @@ export default async function handler(req, res) {
       if (cid.startsWith("mstart|")) return await handleStart(res, body);
       if (cid.startsWith("mguess|")) return await handleGuess(res, body);
       if (cid.startsWith("mhint|"))  return await handleHint(res, body);
+      if (cid.startsWith("tg|"))     return await handleTrivia(res, body);
     } catch { return ephemeral(res, { content: "Something went wrong." }); }
 
-    // Team picker dropdown (unchanged)
     try {
       const userId = body.member?.user?.id;
       const have = new Set(body.member?.roles || []);
       const values = body.data?.values || [];
       for (const roleId of values) {
         const had = have.has(roleId);
-        await fetch(`https://discord.com/api/v10/guilds/${GUILD_ID}/members/${userId}/roles/${roleId}`, {
-          method: had ? "DELETE" : "PUT",
-          headers: { Authorization: `Bot ${BOT_TOKEN}`, "X-Audit-Log-Reason": "Team picker" },
-        });
+        await fetch(`https://discord.com/api/v10/guilds/${GUILD_ID}/members/${userId}/roles/${roleId}`, { method: had ? "DELETE" : "PUT", headers: { Authorization: `Bot ${BOT_TOKEN}`, "X-Audit-Log-Reason": "Team picker" } });
       }
       res.status(200).json({ type: 7, data: { content: body.message.content, components: body.message.components } });
     } catch (e) {
