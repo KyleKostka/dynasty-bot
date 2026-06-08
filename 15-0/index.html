@@ -176,20 +176,22 @@ applyTheme();
 function toast(t){ toastEl.textContent=t; toastEl.classList.add("show"); clearTimeout(toast._t); toast._t=setTimeout(()=>toastEl.classList.remove("show"),1400); }
 function logo(school){ const id=ESPN_ID[school]; return id?`<img src="https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png" alt="">`:`<b style="font-size:15px">${school[0]}</b>`; }
 function openSlots(){ return SLOTS.filter(s=>!state.slots[s.key]); }
-function schoolsForOpen(){
+function combosForOpen(){
+  // valid {school|era} prompts: school not used, has >=1 player fitting an open slot in that era
   const open=openSlots(); const used=state.used;
   const set=new Set();
-  for(const p of PLAYERS){ if(used.has(p.s)) continue; if(open.some(s=>s.accepts.includes(p.p))) set.add(p.s); }
+  for(const p of PLAYERS){ if(used.has(p.s)) continue; if(open.some(s=>s.accepts.includes(p.p))) set.add(p.s+"|"+p.e); }
   return [...set];
 }
 function spin(){
-  const pool=schoolsForOpen();
+  const pool=combosForOpen();
   if(!pool.length){ return null; }
-  const school=pool[Math.floor(Math.random()*pool.length)];
+  const combo=pool[Math.floor(Math.random()*pool.length)];
+  const i=combo.indexOf("|"); const school=combo.slice(0,i), era=combo.slice(i+1);
   const open=openSlots();
-  const all=PLAYERS.filter(p=>p.s===school);
+  const all=PLAYERS.filter(p=>p.s===school && p.e===era);
   const opts=all.filter(p=>open.some(s=>s.accepts.includes(p.p))).sort((a,b)=>b.r-a.r);
-  return {school, opts, total:all.length, more:all.length-opts.length};
+  return {school, era, opts, total:all.length, more:all.length-opts.length};
 }
 
 // ---- screens ----
@@ -200,7 +202,7 @@ function home(){
     <div class="hero">
       <div class="bignum">15-0</div>
       <div class="tag">Build a team that goes undefeated.</div>
-      <div class="sub">Draft an all-time college football roster — one legend per slot, a new school each pick, no school twice. Then see if your squad runs the table.</div>
+      <div class="sub">Each pick spins a <b>school + era</b> — draft the best player from that exact team and decade. Fill all 11 slots, no school twice, and see if your squad runs the table.</div>
       <div class="modes">
         <button class="mode ${state.mode==='classic'?'sel':''}" data-m="classic"><b>Classic</b><span>Ratings shown</span></button>
         <button class="mode ${state.mode==='expert'?'sel':''}" data-m="expert"><b>Expert</b><span>Ratings hidden</span></button>
@@ -243,7 +245,7 @@ function slotCard(s){
 }
 function drawCard(d){
   return `<div class="draw spin">
-     <div class="drawhd"><div class="logo">${logo(d.school)}</div><div><div class="who">You drew · ${d.total} players</div><div class="sch">${d.school}</div></div></div>
+     <div class="drawhd"><div class="logo">${logo(d.school)}</div><div><div class="who">You drew</div><div class="sch">${d.school} · ${d.era}</div></div></div>
      <div class="opts">${d.opts.map(o=>`
        <button class="opt"><span class="posbadge">${o.p}</span><div><div class="pn">${o.n}</div><div class="pe">${o.e}</div></div><span class="pr ${state.mode==='expert'?'hid':''}">${state.mode==='expert'?'?':o.r}</span></button>`).join("")}
      </div>
