@@ -7,12 +7,12 @@ const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const SB_URL = process.env.SUPABASE_URL;
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
-// Channel the advance tracker posts to (defaults to #advance-tracker).
 const ADVANCE_CHANNEL_ID = process.env.ADVANCE_CHANNEL_ID || "1512576539181449316";
-// Only auto-advance once at least this many coaches are registered (guards setup).
-const MIN_COACHES_FOR_AUTO = 2;
+const MIN_COACHES_FOR_AUTO = 2; // don't auto-advance during setup
 
 const DISCORD = "https://discord.com/api/v10";
+const STATUS_EMOJI = { played: "✅", sim: "💻", forcew: "🏆" };
+const STATUS_TAG = { sim: " *(sim)*", forcew: " *(force W)*" };
 
 // ---------- low-level helpers ----------
 async function readRaw(req) {
@@ -27,10 +27,19 @@ const sb = (path, init = {}) =>
   });
 const reply = (res, data) => res.status(200).json({ type: 4, data });
 const ephemeral = (res, data) => res.status(200).json({ type: 4, data: { flags: 64, ...data } });
+const updateMsg = (res, data) => res.status(200).json({ type: 7, data });
 const userOf = (b) => b.member?.user || b.user || {};
+const nameOf = (u) => u.global_name || u.username || "coach";
 const botHeaders = { Authorization: `Bot ${BOT_TOKEN}`, "Content-Type": "application/json" };
+
 const postChannel = (channelId, payload) =>
   fetch(`${DISCORD}/channels/${channelId}/messages`, { method: "POST", headers: botHeaders, body: JSON.stringify(payload) });
+async function postChannelJson(channelId, payload) {
+  const r = await postChannel(channelId, payload);
+  return r.ok ? await r.json() : null;
+}
+const editMessage = (channelId, messageId, payload) =>
+  fetch(`${DISCORD}/channels/${channelId}/messages/${messageId}`, { method: "PATCH", headers: botHeaders, body: JSON.stringify(payload) });
 
 // commissioner = server admin OR member with a role named "Commissioner"
 async function isCommish(body) {
@@ -53,80 +62,144 @@ async function getLeague() {
   const rows = r.ok ? await r.json() : [];
   return rows[0] || { season: 2027, current_week: 1 };
 }
-async function activeCoaches() {
-  const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team");
-  return r.ok ? await r.json() : [];
-}
-async function advancesFor(season, week) {
-  const r = await sb(`dyn_advances?season=eq.${season}&week=eq.${week}&select=user_id,username`);
-  return r.ok ? await r.json() : [];
-}
 async function setWeek(week) {
   await sb("dyn_league?id=eq.1", { method: "PATCH", body: JSON.stringify({ current_week: week, updated_at: new Date().toISOString() }) });
+}
+async function activeCoaches() {
+  const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team&order=username.asc");
+  return r.ok ? await r.json() : [];
+}
+async function advanceMap(season, week) {
+  const r = await sb(`dyn_advances?season=eq.${season}&week=eq.${week}&select=user_id,username,status`);
+  const rows = r.ok ? await r.json() : [];
+  const m = new Map();
+  for (const x of rows) m.set(x.user_id, x);
+  return m;
+}
+async function setAdvance(season, week, user_id, username, status) {
+  await sb("dyn_coaches?on_conflict=user_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates" },
+    body: JSON.stringify({ user_id, username, active: true }),
+  });
+  await sb("dyn_advances?on_conflict=season,week,user_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ season, week, user_id, username, status, advanced_at: new Date().toISOString() }),
+  });
+}
+
+// ---------- advance board ----------
+function renderBoard(week, coaches, amap) {
+  const lines = coaches.map((c) => {
+    const a = amap.get(c.user_id);
+    const e = a ? STATUS_EMOJI[a.status] || "✅" : "⏳";
+    const tag = a ? STATUS_TAG[a.status] || "" : "";
+    return `${e} ${c.username || c.user_id}${tag}`;
+  });
+  const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
+  const body = lines.join("\n") || "_No coaches yet — pick a team in the team-picker channel._";
+  const content =
+    `🏈 **Week ${week} — Advance Board**\n${resolved}/${coaches.length} resolved\n\n${body}\n\n` +
+    "Tap **✅ I've played** when your game's done. Commissioners: `/sim @coach`, `/forcew @coach`, `/advance`.";
+  const components = [{ type: 1, components: [{ type: 2, style: 3, label: "I've played ✅", custom_id: "adv_done" }] }];
+  return { content, components };
+}
+async function getBoardRef() {
+  const r = await sb("dyn_board?id=eq.1&select=channel_id,message_id,season,week");
+  const rows = r.ok ? await r.json() : [];
+  return rows[0] || null;
+}
+async function setBoardRef(season, week, channel_id, message_id) {
+  await sb("dyn_board?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ id: 1, season, week, channel_id, message_id, updated_at: new Date().toISOString() }),
+  });
+}
+async function postBoard(season, week) {
+  const coaches = await activeCoaches();
+  const amap = await advanceMap(season, week);
+  const msg = await postChannelJson(ADVANCE_CHANNEL_ID, renderBoard(week, coaches, amap));
+  if (msg) await setBoardRef(season, week, ADVANCE_CHANNEL_ID, msg.id);
+  return msg;
+}
+async function refreshBoard() {
+  const ref = await getBoardRef();
+  if (!ref || !ref.message_id) return;
+  const coaches = await activeCoaches();
+  const amap = await advanceMap(ref.season, ref.week);
+  await editMessage(ref.channel_id, ref.message_id, renderBoard(ref.week, coaches, amap));
+}
+// advance + post a fresh board when every coach is resolved
+async function maybeAdvance() {
+  const lg = await getLeague();
+  const coaches = await activeCoaches();
+  const amap = await advanceMap(lg.season, lg.current_week);
+  const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
+  if (coaches.length >= MIN_COACHES_FOR_AUTO && resolved >= coaches.length) {
+    const next = lg.current_week + 1;
+    await postChannel(ADVANCE_CHANNEL_ID, {
+      content: `🏁 **Week ${lg.current_week} complete!** All ${coaches.length} games resolved. Advancing to **Week ${next}**. 🏈`,
+    });
+    await setWeek(next);
+    await postBoard(lg.season, next);
+    return true;
+  }
+  return false;
 }
 
 // ---------- slash commands ----------
 async function cmdDone(res, body) {
   const u = userOf(body);
-  const username = u.global_name || u.username || "coach";
   const lg = await getLeague();
-
-  // make sure the caller is on the roster (don't clobber an existing team)
-  await sb("dyn_coaches?on_conflict=user_id", {
-    method: "POST",
-    headers: { Prefer: "resolution=ignore-duplicates" },
-    body: JSON.stringify({ user_id: u.id, username, active: true }),
-  });
-
-  const ins = await sb("dyn_advances", {
-    method: "POST",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ season: lg.season, week: lg.current_week, user_id: u.id, username }),
-  });
-  if (ins.status === 409) return ephemeral(res, { content: `You've already advanced **Week ${lg.current_week}**. ✅` });
-  if (!ins.ok) return ephemeral(res, { content: "Couldn't record that — try again." });
-
-  const coaches = await activeCoaches();
-  const done = await advancesFor(lg.season, lg.current_week);
-  const total = coaches.length || done.length;
-  const doneCount = done.length;
-
-  if (total >= MIN_COACHES_FOR_AUTO && doneCount >= total) {
-    const list = done.map((d) => d.username || "coach").join(", ");
-    const next = lg.current_week + 1;
-    await postChannel(ADVANCE_CHANNEL_ID, {
-      content: `🏁 **Week ${lg.current_week} complete!** All ${total} coaches are in (${list}).\n⏭️ The league is now on **Week ${next}** — play your games and run \`/done\`. Good luck. 🏈`,
-    });
-    await setWeek(next);
-    return reply(res, { content: `✅ You were the last one in — **Week ${lg.current_week} is done!** League advanced to **Week ${next}**. 🎉` });
-  }
-
-  return reply(res, { content: `✅ **${username}** advanced **Week ${lg.current_week}** — ${doneCount}/${total} in.` });
+  await setAdvance(lg.season, lg.current_week, u.id, nameOf(u), "played");
+  await refreshBoard();
+  await maybeAdvance();
+  return reply(res, { content: `✅ **${nameOf(u)}** is in for **Week ${lg.current_week}**.` });
 }
-
 async function cmdStatus(res, body) {
   const lg = await getLeague();
   const coaches = await activeCoaches();
-  const done = await advancesFor(lg.season, lg.current_week);
-  const doneIds = new Set(done.map((d) => d.user_id));
-  const doneList = done.map((d) => `✅ ${d.username || "coach"}`);
-  const pending = coaches.filter((c) => !doneIds.has(c.user_id)).map((c) => `⏳ ${c.username || c.user_id}`);
-  const total = coaches.length || done.length;
-  const lines = [...doneList, ...pending].join("\n") || "_No coaches registered yet — pick a team or run `/done`._";
-  return reply(res, { content: `📋 **Week ${lg.current_week}** — ${done.length}/${total} advanced\n${lines}` });
+  const amap = await advanceMap(lg.season, lg.current_week);
+  const lines = coaches.map((c) => {
+    const a = amap.get(c.user_id);
+    return `${a ? STATUS_EMOJI[a.status] || "✅" : "⏳"} ${c.username || c.user_id}${a ? STATUS_TAG[a.status] || "" : ""}`;
+  });
+  const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
+  return ephemeral(res, { content: `📋 **Week ${lg.current_week}** — ${resolved}/${coaches.length} resolved\n${lines.join("\n") || "_No coaches yet._"}` });
 }
-
+function resolvedUser(body, userId) {
+  const ru = body.data?.resolved?.users?.[userId];
+  return ru ? ru.global_name || ru.username : "coach";
+}
+async function cmdSimOrForce(res, body, status, verb) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const opt = (body.data.options || []).find((o) => o.name === "coach");
+  const target = opt?.value;
+  if (!target) return ephemeral(res, { content: "Pick a coach." });
+  const tname = resolvedUser(body, target);
+  const lg = await getLeague();
+  await setAdvance(lg.season, lg.current_week, target, tname, status);
+  await refreshBoard();
+  await maybeAdvance();
+  return ephemeral(res, { content: `${STATUS_EMOJI[status]} ${verb} **${tname}**'s game for Week ${lg.current_week}.` });
+}
+async function cmdBoard(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const lg = await getLeague();
+  await postBoard(lg.season, lg.current_week);
+  return ephemeral(res, { content: `Posted the Week ${lg.current_week} board in <#${ADVANCE_CHANNEL_ID}>.` });
+}
 async function cmdAdvance(res, body) {
-  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Only commissioners can advance the league." });
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
   const lg = await getLeague();
   const next = lg.current_week + 1;
   await setWeek(next);
-  await postChannel(ADVANCE_CHANNEL_ID, {
-    content: `⏭️ A commissioner advanced the league to **Week ${next}**. Play your games and run \`/done\`.`,
-  });
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `⏭️ A commissioner advanced the league to **Week ${next}**. Play your games and tap ✅.` });
+  await postBoard(lg.season, next);
   return ephemeral(res, { content: `Advanced to **Week ${next}**.` });
 }
-
 async function cmdWeek(res, body) {
   if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
   const opt = (body.data.options || []).find((o) => o.name === "number");
@@ -135,20 +208,31 @@ async function cmdWeek(res, body) {
   await setWeek(wk);
   return ephemeral(res, { content: `Set current week to **${wk}**.` });
 }
-
 async function cmdMyteam(res, body) {
   const u = userOf(body);
   const r = await sb(`dyn_coaches?user_id=eq.${u.id}&select=team`);
   const rows = r.ok ? await r.json() : [];
   const team = rows[0]?.team;
-  return ephemeral(res, { content: team ? `Your team: **${team}**` : "You haven't picked a team yet — use the dropdowns in the team-picker channel." });
+  return ephemeral(res, { content: team ? `Your team: **${team}**` : "You haven't picked a team yet — use the team-picker dropdowns." });
+}
+
+// ---------- ✅ check-in button ----------
+async function handleAdvDone(res, body) {
+  const u = userOf(body);
+  const lg = await getLeague();
+  await setAdvance(lg.season, lg.current_week, u.id, nameOf(u), "played");
+  const coaches = await activeCoaches();
+  const amap = await advanceMap(lg.season, lg.current_week);
+  const rendered = renderBoard(lg.current_week, coaches, amap); // re-render the week this board represents
+  await maybeAdvance(); // may post a fresh board for the next week as a new message
+  return updateMsg(res, rendered);
 }
 
 // ---------- team picker (select menu) ----------
 async function handleTeamPick(res, body) {
   try {
     const userId = body.member?.user?.id;
-    const username = body.member?.user?.global_name || body.member?.user?.username;
+    const username = nameOf(body.member?.user || {});
     const have = new Set(body.member?.roles || []);
     const values = body.data?.values || [];
     const labelFor = (val) => {
@@ -171,7 +255,7 @@ async function handleTeamPick(res, body) {
         });
       }
     }
-  } catch { /* fall through to a safe update */ }
+  } catch { /* fall through */ }
   return res.status(200).json({ type: 7, data: { content: body.message.content, components: body.message.components } });
 }
 
@@ -189,26 +273,28 @@ export default async function handler(req, res) {
 
   const body = JSON.parse(raw);
 
-  // PING
   if (body.type === 1) { res.status(200).json({ type: 1 }); return; }
 
-  // slash commands
   if (body.type === 2) {
     const name = body.data?.name;
     try {
       if (name === "done") return await cmdDone(res, body);
       if (name === "status") return await cmdStatus(res, body);
+      if (name === "myteam") return await cmdMyteam(res, body);
+      if (name === "board") return await cmdBoard(res, body);
+      if (name === "sim") return await cmdSimOrForce(res, body, "sim", "Simmed");
+      if (name === "forcew") return await cmdSimOrForce(res, body, "forcew", "Force-win for");
       if (name === "advance") return await cmdAdvance(res, body);
       if (name === "week") return await cmdWeek(res, body);
-      if (name === "myteam") return await cmdMyteam(res, body);
     } catch (e) {
       return ephemeral(res, { content: "Something went wrong: " + String(e).slice(0, 150) });
     }
     return ephemeral(res, { content: "Unknown command." });
   }
 
-  // components (team picker select menu)
   if (body.type === 3) {
+    const cid = body.data?.custom_id || "";
+    if (cid === "adv_done") return await handleAdvDone(res, body);
     return await handleTeamPick(res, body);
   }
 

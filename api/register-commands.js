@@ -1,26 +1,23 @@
 // One-off endpoint to (re)register the guild slash commands with Discord.
-// Call once after deploy:  /api/register-commands?key=YOUR_SETUP_SECRET
-// Re-run any time you change the COMMANDS list below.
+// Call after each deploy that changes COMMANDS:
+//   /api/register-commands?key=YOUR_SETUP_SECRET
 
 const APP_ID = process.env.DISCORD_APP_ID;
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const SETUP_SECRET = process.env.SETUP_SECRET;
 
-// type 1 = CHAT_INPUT (slash). option type 4 = INTEGER.
-// Commissioner gating is enforced in code (admin or "Commissioner" role), so
-// these stay visible to everyone and reject non-commissioners with a message.
+// type 1 = CHAT_INPUT (slash). option type 4 = INTEGER, type 6 = USER.
+// Commissioner gating is enforced in code (admin or "Commissioner" role).
 const COMMANDS = [
-  { name: "done", description: "Mark yourself advanced for the current week", type: 1 },
-  { name: "status", description: "See who still needs to advance this week", type: 1 },
+  { name: "done", description: "Mark yourself done (played) for the current week", type: 1 },
+  { name: "status", description: "See the current advance status", type: 1 },
   { name: "myteam", description: "Show your current team", type: 1 },
-  { name: "advance", description: "(Commissioner) Advance the league to the next week", type: 1 },
-  {
-    name: "week",
-    description: "(Commissioner) Set the current week",
-    type: 1,
-    options: [{ name: "number", description: "Week number", type: 4, required: true }],
-  },
+  { name: "board", description: "(Commissioner) Post the weekly advance board", type: 1 },
+  { name: "sim", description: "(Commissioner) Mark a coach's game as simmed", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
+  { name: "forcew", description: "(Commissioner) Give a coach a force win", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
+  { name: "advance", description: "(Commissioner) Force-advance to the next week", type: 1 },
+  { name: "week", description: "(Commissioner) Set the current week", type: 1, options: [{ name: "number", description: "Week number", type: 4, required: true }] },
 ];
 
 export default async function handler(req, res) {
