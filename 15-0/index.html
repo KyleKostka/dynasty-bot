@@ -137,7 +137,9 @@
 <div class="toast" id="toast"></div>
 
 <script type="module">
-import { PLAYERS } from "./players.js";
+let PLAYERS=[];
+const SB_URL="https://uqzfgtuqhgrjqrghmyrw.supabase.co";
+const SB_KEY="sb_publishable_mVls9nuQ0DavcxgQ2IPgjA_rTNLp2tn";
 
 const SLOTS = [
   {key:"QB",label:"QB",accepts:["QB"]},
@@ -325,7 +327,17 @@ function result(){
   };
 }
 
-home();
+async function loadPlayers(){
+  app.innerHTML=`<div class="screen" style="flex:1;display:grid;place-items:center"><div style="text-align:center"><div class="bignum" style="font-size:64px">15-0</div><div style="color:var(--muted);margin-top:6px">Loading the all-time roster…</div></div></div>`;
+  try{
+    const r=await fetch(`${SB_URL}/rest/v1/cfb_dataset?id=eq.players&select=data`,{headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY}});
+    const j=await r.json();
+    PLAYERS=(j[0]&&j[0].data)||[];
+  }catch(e){ PLAYERS=[]; }
+  if(!PLAYERS.length){ app.innerHTML=`<div class="screen" style="padding-top:60px;text-align:center;color:var(--bad)">Couldn't load players — refresh to try again.</div>`; return; }
+  home();
+}
+loadPlayers();
 </script>
 </body>
 </html>
