@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0a0b10" />
+<title>15-0 · College Football Draft</title>
+<style>
+  :root{
+    --bg:#f5f6fa; --panel:#ffffff; --panel2:#eef0f6; --ink:#0d0f1a; --muted:#5b6172;
+    --line:#e2e5ee; --accent:#1763ff; --accent2:#00d18f; --gold:#ffb200; --bad:#ff4d61;
+    --shadow:0 8px 30px rgba(20,28,60,.10);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0a0b10; --panel:#13151f; --panel2:#1b1e2b; --ink:#f3f5fb;
+      --muted:#9aa1b4; --line:#262a3a; --accent:#3b82f6; --accent2:#19e3a0; --gold:#ffc233; --bad:#ff5d6e;
+      --shadow:0 10px 40px rgba(0,0,0,.45);
+    }
+  }
+  [data-theme="light"]{
+    --bg:#f5f6fa; --panel:#fff; --panel2:#eef0f6; --ink:#0d0f1a; --muted:#5b6172;
+    --line:#e2e5ee; --accent:#1763ff; --accent2:#00b87e; --gold:#e89c00; --bad:#e0394c; --shadow:0 8px 30px rgba(20,28,60,.10);
+  }
+  [data-theme="dark"]{
+    --bg:#0a0b10; --panel:#13151f; --panel2:#1b1e2b; --ink:#f3f5fb; --muted:#9aa1b4;
+    --line:#262a3a; --accent:#3b82f6; --accent2:#19e3a0; --gold:#ffc233; --bad:#ff5d6e; --shadow:0 10px 40px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    min-height:100dvh; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:520px; margin:0 auto; padding:18px 16px 40px; min-height:100dvh; display:flex; flex-direction:column}
+  .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:8px}
+  .brand{display:flex; align-items:center; gap:9px; font-weight:800; letter-spacing:-.02em}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent2);box-shadow:0 0 14px var(--accent2)}
+  .iconbtn{background:var(--panel); border:1px solid var(--line); color:var(--ink); width:38px;height:38px;border-radius:11px;font-size:17px;cursor:pointer;display:grid;place-items:center}
+  .screen{flex:1; display:flex; flex-direction:column; animation:fade .35s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  /* HOME */
+  .hero{flex:1; display:flex; flex-direction:column; justify-content:center; text-align:center; gap:6px; padding:10px 0}
+  .bignum{font-size:clamp(78px,26vw,130px); font-weight:900; line-height:.9; letter-spacing:-.05em;
+    background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 6px 30px color-mix(in srgb,var(--accent) 35%,transparent))}
+  .tag{font-size:18px; font-weight:700; margin-top:4px}
+  .sub{color:var(--muted); font-size:14.5px; line-height:1.5; max-width:330px; margin:6px auto 0}
+  .modes{display:flex; gap:10px; margin:22px auto 0; width:100%; max-width:340px}
+  .mode{flex:1; background:var(--panel); border:1.5px solid var(--line); border-radius:14px; padding:13px 10px; cursor:pointer; text-align:left; transition:.18s}
+  .mode.sel{border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,var(--panel))}
+  .mode b{display:block; font-size:15px}
+  .mode span{font-size:12px; color:var(--muted)}
+  .cta{margin:22px auto 0; width:100%; max-width:340px; border:none; cursor:pointer;
+    background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; font-weight:800; font-size:18px;
+    padding:16px; border-radius:15px; box-shadow:0 8px 26px color-mix(in srgb,var(--accent) 40%,transparent)}
+  .cta:active{transform:scale(.98)}
+  .foot{color:var(--muted); font-size:12px; text-align:center; margin-top:14px}
+
+  /* DRAFT */
+  .hdr{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px}
+  .hdr h2{margin:0; font-size:17px}
+  .hdr .pill{font-size:12px; color:var(--muted)}
+  .prog{height:7px; background:var(--panel2); border-radius:6px; overflow:hidden; margin-bottom:14px}
+  .prog>i{display:block; height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .4s cubic-bezier(.4,1.3,.5,1)}
+  .board{display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:14px}
+  .slot{background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:8px 10px; min-height:50px; display:flex; flex-direction:column; justify-content:center}
+  .slot .pos{font-size:10.5px; font-weight:800; letter-spacing:.08em; color:var(--muted)}
+  .slot.full{border-color:color-mix(in srgb,var(--accent2) 50%,var(--line))}
+  .slot.full .pos{color:var(--accent2)}
+  .slot .nm{font-size:13.5px; font-weight:700; line-height:1.15; margin-top:2px}
+  .slot .sc{font-size:11px; color:var(--muted)}
+  .slot.empty .nm{color:var(--muted); font-weight:500; font-size:12.5px}
+  .slot.active{border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+  .rt{margin-left:auto; font-size:11px; font-weight:800; padding:1px 6px; border-radius:6px; background:var(--panel2)}
+
+  .draw{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow:var(--shadow)}
+  .drawhd{display:flex; align-items:center; gap:11px; margin-bottom:10px}
+  .logo{width:46px;height:46px;border-radius:11px; background:var(--panel2); display:grid; place-items:center; overflow:hidden; flex:none}
+  .logo img{width:100%;height:100%;object-fit:contain}
+  .drawhd .who{font-size:12px;color:var(--muted)}
+  .drawhd .sch{font-size:19px; font-weight:800; line-height:1}
+  .opts{display:flex; flex-direction:column; gap:7px}
+  .opt{display:flex; align-items:center; gap:10px; background:var(--panel2); border:1.5px solid transparent; border-radius:11px; padding:10px 12px; cursor:pointer; text-align:left; transition:.14s}
+  .opt:active{transform:scale(.99)}
+  .opt:hover{border-color:var(--accent)}
+  .opt .posbadge{font-size:10px; font-weight:800; color:#fff; background:var(--accent); border-radius:6px; padding:3px 6px; flex:none; min-width:40px; text-align:center}
+  .opt .pn{font-weight:700; font-size:14.5px}
+  .opt .pe{font-size:11.5px; color:var(--muted)}
+  .opt .pr{margin-left:auto; font-weight:800; font-size:14px}
+  .opt .pr.hid{color:var(--muted); font-weight:600}
+  .skip{margin-top:10px; width:100%; background:transparent; border:1px dashed var(--line); color:var(--muted); border-radius:11px; padding:9px; cursor:pointer; font-size:13px}
+
+  /* RESULT */
+  .res{flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; padding-top:6px}
+  .recwrap{margin:8px 0 2px}
+  .record{font-size:clamp(64px,22vw,108px); font-weight:900; line-height:.9; letter-spacing:-.04em}
+  .tierbadge{display:inline-block; font-weight:800; font-size:15px; padding:8px 18px; border-radius:999px; margin-top:8px}
+  .blurb{color:var(--muted); font-size:14px; margin:12px 6px 0; line-height:1.5}
+  .ovr{display:flex; gap:8px; justify-content:center; margin:16px 0 6px}
+  .ovr div{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:9px 14px; min-width:84px}
+  .ovr b{display:block; font-size:22px; font-weight:900}
+  .ovr span{font-size:11px; color:var(--muted)}
+  .roster{width:100%; margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:6px}
+  .rr{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:7px 9px; text-align:left; display:flex; align-items:center; gap:7px}
+  .rr .p{font-size:9.5px;font-weight:800;color:var(--muted);min-width:30px}
+  .rr .n{font-size:12px;font-weight:700;line-height:1.1}
+  .rr .s{font-size:10.5px;color:var(--muted)}
+  .rr .v{margin-left:auto;font-weight:800;font-size:12.5px}
+  .btnrow{display:flex; gap:10px; width:100%; margin-top:18px}
+  .btn{flex:1; border:none; cursor:pointer; font-weight:800; font-size:15.5px; padding:14px; border-radius:14px}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff}
+  .btn.ghost{background:var(--panel); border:1.5px solid var(--line); color:var(--ink)}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:11px;font-size:13px;font-weight:600;opacity:0;transition:.3s;pointer-events:none}
+  .toast.show{opacity:1}
+  .pop{animation:pop .5s cubic-bezier(.3,1.6,.5,1)}
+  @keyframes pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+  .spin{animation:spin .45s ease}
+  @keyframes spin{0%{opacity:0;transform:rotateX(40deg) translateY(10px)}100%{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> 15-0</div>
+    <button class="iconbtn" id="theme" title="Theme">◐</button>
+  </div>
+  <div id="app"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { PLAYERS } from "./players.js";
+
+const SLOTS = [
+  {key:"QB",label:"QB",accepts:["QB"]},
+  {key:"RB",label:"RB",accepts:["RB"]},
+  {key:"WR1",label:"WR",accepts:["WR"]},
+  {key:"WR2",label:"WR",accepts:["WR"]},
+  {key:"TE",label:"TE",accepts:["TE"]},
+  {key:"FLEX",label:"FLEX",accepts:["RB","WR","TE"]},
+  {key:"EDGE",label:"EDGE",accepts:["EDGE"]},
+  {key:"DT",label:"DT",accepts:["DT"]},
+  {key:"LB",label:"LB",accepts:["LB"]},
+  {key:"CB",label:"CB",accepts:["CB"]},
+  {key:"S",label:"S",accepts:["S"]},
+];
+const WEIGHT = {QB:1.7, RB:1.0, WR1:1.05, WR2:1.0, TE:.75, FLEX:.95, EDGE:1.15, DT:1.0, LB:1.05, CB:1.15, S:1.05};
+const ESPN_ID = { /* school -> espn logo id (subset; falls back to monogram) */
+ "Alabama":333,"Ohio State":194,"Georgia":61,"USC":30,"Oklahoma":201,"Texas":251,"Michigan":130,
+ "Notre Dame":87,"LSU":99,"Florida":57,"Miami":2390,"Florida State":52,"Nebraska":158,"Penn State":213,
+ "Tennessee":2633,"Auburn":2,"Clemson":228,"Oregon":2483,"Pittsburgh":221,"Oklahoma State":197,
+ "Georgia Tech":59,"Virginia Tech":259,"Houston":248,"BYU":252,"Boise State":68,"Hawaii":62,
+ "Fresno State":278,"San Diego State":21,"Southern Miss":2572,"Marshall":276 };
+
+const app = document.getElementById("app");
+const toastEl = document.getElementById("toast");
+let state = { mode:"classic", slots:{}, used:new Set(), draw:null, round:0 };
+
+// ---- theme ----
+const themeBtn = document.getElementById("theme");
+let theme = localStorage.getItem("t15_theme") || "auto";
+function applyTheme(){ if(theme==="auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme",theme); }
+themeBtn.onclick = ()=>{ theme = theme==="auto"?"dark":theme==="dark"?"light":"auto"; localStorage.setItem("t15_theme",theme); applyTheme(); toast("Theme: "+theme); };
+applyTheme();
+
+function toast(t){ toastEl.textContent=t; toastEl.classList.add("show"); clearTimeout(toast._t); toast._t=setTimeout(()=>toastEl.classList.remove("show"),1400); }
+function logo(school){ const id=ESPN_ID[school]; return id?`<img src="https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png" alt="">`:`<b style="font-size:15px">${school[0]}</b>`; }
+function openSlots(){ return SLOTS.filter(s=>!state.slots[s.key]); }
+function schoolsForOpen(){
+  const open=openSlots(); const used=state.used;
+  const set=new Set();
+  for(const p of PLAYERS){ if(used.has(p.s)) continue; if(open.some(s=>s.accepts.includes(p.p))) set.add(p.s); }
+  return [...set];
+}
+function spin(){
+  const pool=schoolsForOpen();
+  if(!pool.length){ return null; }
+  const school=pool[Math.floor(Math.random()*pool.length)];
+  const open=openSlots();
+  const opts=PLAYERS.filter(p=>p.s===school && open.some(s=>s.accepts.includes(p.p)))
+                    .sort((a,b)=>b.r-a.r).slice(0,6);
+  return {school,opts};
+}
+
+// ---- screens ----
+function home(){
+  state={mode:state.mode,slots:{},used:new Set(),draw:null,round:0};
+  app.innerHTML=`
+   <div class="screen">
+    <div class="hero">
+      <div class="bignum">15-0</div>
+      <div class="tag">Build a team that goes undefeated.</div>
+      <div class="sub">Draft an all-time college football roster — one legend per slot, a new school each pick, no school twice. Then see if your squad runs the table.</div>
+      <div class="modes">
+        <button class="mode ${state.mode==='classic'?'sel':''}" data-m="classic"><b>Classic</b><span>Ratings shown</span></button>
+        <button class="mode ${state.mode==='expert'?'sel':''}" data-m="expert"><b>Expert</b><span>Ratings hidden</span></button>
+      </div>
+      <button class="cta" id="play">Start the Draft →</button>
+      <div class="foot">11 picks · QB·RB·WR·WR·TE·FLEX · EDGE·DT·LB·CB·S</div>
+    </div>
+   </div>`;
+  app.querySelectorAll(".mode").forEach(b=>b.onclick=()=>{state.mode=b.dataset.m; home();});
+  document.getElementById("play").onclick=()=>{ state.draw=spin(); state.round=1; draft(); };
+}
+
+function draft(){
+  const filled=SLOTS.filter(s=>state.slots[s.key]).length;
+  const d=state.draw;
+  app.innerHTML=`
+   <div class="screen">
+     <div class="hdr"><h2>Your Lineup</h2><span class="pill">${state.mode==='expert'?'Expert':'Classic'} · pick ${Math.min(filled+1,11)}/11</span></div>
+     <div class="prog"><i style="width:${filled/11*100}%"></i></div>
+     <div class="board">${SLOTS.map(s=>slotCard(s)).join("")}</div>
+     ${d?drawCard(d):`<div class="draw"><div class="drawhd"><div class="who">No eligible school left — </div></div></div>`}
+   </div>`;
+  if(d){
+    app.querySelectorAll(".opt").forEach((el,i)=>el.onclick=()=>pick(d.school,d.opts[i]));
+    const sk=document.getElementById("skip"); if(sk) sk.onclick=()=>{ state.draw=spin(); draft(); };
+  }
+}
+function slotCard(s){
+  const p=state.slots[s.key];
+  const open=openSlots(); const isActive=state.draw && state.draw.opts.some(o=>open.find(x=>x.key===s.key&&x.accepts.includes(o.p)));
+  if(p) return `<div class="slot full"><span class="pos">${s.label}</span><div style="display:flex;align-items:center"><span class="nm">${p.n}</span><span class="rt">${state.mode==='expert'?'•':p.r}</span></div><span class="sc">${p.s}</span></div>`;
+  return `<div class="slot empty ${isActive?'active':''}"><span class="pos">${s.label}</span><span class="nm">—</span></div>`;
+}
+function drawCard(d){
+  return `<div class="draw spin">
+     <div class="drawhd"><div class="logo">${logo(d.school)}</div><div><div class="who">You drew</div><div class="sch">${d.school}</div></div></div>
+     <div class="opts">${d.opts.map(o=>`
+       <button class="opt"><span class="posbadge">${o.p}</span><div><div class="pn">${o.n}</div><div class="pe">${o.e}</div></div><span class="pr ${state.mode==='expert'?'hid':''}">${state.mode==='expert'?'?':o.r}</span></button>`).join("")}
+     </div>
+     <button class="skip" id="skip">↻ Re-spin (skip this school)</button>
+   </div>`;
+}
+function pick(school,player){
+  // place into best open slot this player fits (prefer exact pos over flex)
+  const open=openSlots();
+  let slot=open.find(s=>s.key!=="FLEX"&&s.accepts.includes(player.p)) || open.find(s=>s.accepts.includes(player.p));
+  if(!slot) return;
+  state.slots[slot.key]={...player};
+  state.used.add(school);
+  if(SLOTS.every(s=>state.slots[s.key])){ return result(); }
+  state.draw=spin(); state.round++; draft();
+}
+
+// ---- engine ----
+function evaluate(){
+  let wsum=0, w=0;
+  for(const s of SLOTS){ const p=state.slots[s.key]; const wt=WEIGHT[s.key]; wsum+=p.r*wt; w+=wt; }
+  const teamScore=wsum/w;
+  // balance bonus: reward not having a weak link
+  const lo=Math.min(...SLOTS.map(s=>state.slots[s.key].r));
+  const bal=(lo-72)*0.12; // small
+  const adj=teamScore+bal;
+  let wins=Math.round((adj-78)/(94-78)*15);
+  wins=Math.max(0,Math.min(15,wins));
+  return {teamScore:Math.round(teamScore), wins, ovr:Math.round(adj)};
+}
+const TIERS=[
+  {w:15,t:"IMMACULATE",c:"var(--gold)",b:"Perfect season. An all-time roster that never loses. You just built a legend."},
+  {w:14,t:"NATIONAL TITLE CONTENDER",c:"var(--accent2)",b:"One slip from immortality — this team is hoisting a trophy most years."},
+  {w:13,t:"PLAYOFF LOCK",c:"var(--accent2)",b:"Right in the thick of the 12-team field with a real shot at it all."},
+  {w:11,t:"NEW YEAR'S SIX",c:"var(--accent)",b:"A big-bowl team. Dangerous, but a notch below the true blue bloods."},
+  {w:9, t:"BOWL TEAM",c:"var(--accent)",b:"Solid and bowl-bound, but the schedule leaves some scars."},
+  {w:7, t:"MIDDLE OF THE PACK",c:"var(--muted)",b:"Competitive on any given Saturday — just not enough stars up top."},
+  {w:5, t:"REBUILD YEAR",c:"var(--muted)",b:"Some pieces to like, but a long season ahead."},
+  {w:0, t:"ROCK BOTTOM",c:"var(--bad)",b:"It happens. Spin it up and draft a better board."},
+];
+function tierFor(w){ return TIERS.find(t=>w>=t.w); }
+
+function result(){
+  const e=evaluate(); const tier=tierFor(e.wins); const losses=15-e.wins;
+  app.innerHTML=`
+   <div class="screen res">
+     <div class="recwrap"><div class="record pop" style="${e.wins===15?'background:linear-gradient(135deg,var(--gold),#ff8a00);-webkit-background-clip:text;background-clip:text;color:transparent':''}">${e.wins}-${losses}</div></div>
+     <div class="tierbadge pop" style="background:color-mix(in srgb,${tier.c} 18%,transparent);color:${tier.c}">${tier.t}</div>
+     <div class="blurb">${tier.b}</div>
+     <div class="ovr">
+       <div><b>${e.ovr}</b><span>TEAM OVR</span></div>
+       <div><b>${e.wins}</b><span>WINS</span></div>
+       <div><b>${state.mode==='expert'?'EXP':'CLA'}</b><span>MODE</span></div>
+     </div>
+     <div class="roster">${SLOTS.map(s=>{const p=state.slots[s.key];return `<div class="rr"><span class="p">${s.label}</span><div><div class="n">${p.n}</div><div class="s">${p.s}</div></div><span class="v">${p.r}</span></div>`;}).join("")}</div>
+     <div class="btnrow">
+       <button class="btn ghost" id="share">Share</button>
+       <button class="btn primary" id="again">Play Again</button>
+     </div>
+   </div>`;
+  document.getElementById("again").onclick=home;
+  document.getElementById("share").onclick=()=>{
+    const star="🏈".repeat(Math.max(1,Math.round(e.wins/3)));
+    const txt=`15-0 College Football Draft\n${e.wins}-${losses} · ${tier.t}\nTeam OVR ${e.ovr} ${star}\nplay: ${location.origin}${location.pathname}`;
+    if(navigator.share){ navigator.share({text:txt}).catch(()=>{}); }
+    else { navigator.clipboard.writeText(txt).then(()=>toast("Copied result!")); }
+  };
+}
+
+home();
+</script>
+</body>
+</html>
