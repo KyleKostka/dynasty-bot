@@ -1,7 +1,5 @@
-// Daily "Guess the Mascot" — Start-wall + timed, fastest-wins. All D1 schools.
-// /api/games/mascot?key=GAMES_SECRET  (run daily by GitHub Actions)
-// Pulls the D1 school list from ESPN at runtime (server-side), so no data is bundled.
-
+// Daily "Guess the Mascot" — Start-wall + timed, fastest-wins.
+// Pool = the recognizable FBS football schools; logo ids resolved from ESPN at runtime.
 const BOT_TOKEN   = process.env.DISCORD_BOT_TOKEN;
 const CHANNEL_ID  = process.env.GAMES_CHANNEL_ID;
 const GAMES_SECRET= process.env.GAMES_SECRET;
@@ -13,22 +11,27 @@ const HJ   = { Authorization: `Bot ${BOT_TOKEN}`, "Content-Type": "application/j
 const BASE = "https://dynasty-team-picker.vercel.app";
 const COVER  = `${BASE}/api/games/silhouette?cover=1`;
 const REVEAL = (id) => `${BASE}/api/games/silhouette?id=${id}&reveal=1`;
-const ESPN_D1 = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams?groups=50&limit=500";
+const ESPN_FB = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams?limit=400";
+
+const FBS_NAMES = ["Alabama","Arkansas","Auburn","Florida","Georgia","Kentucky","LSU","Mississippi State","Missouri","Oklahoma","Ole Miss","South Carolina","Tennessee","Texas","Texas A&M","Vanderbilt","Illinois","Indiana","Iowa","Maryland","Michigan","Michigan State","Minnesota","Nebraska","Northwestern","Ohio State","Oregon","Penn State","Purdue","Rutgers","UCLA","USC","Washington","Wisconsin","Arizona","Arizona State","Baylor","BYU","Cincinnati","Colorado","Houston","Iowa State","Kansas","Kansas State","Oklahoma State","TCU","Texas Tech","UCF","Utah","West Virginia","Boston College","California","Clemson","Duke","Florida State","Georgia Tech","Louisville","Miami","NC State","North Carolina","Pittsburgh","SMU","Stanford","Syracuse","Virginia","Virginia Tech","Wake Forest","Oregon State","Washington State","Boise State","Colorado State","Fresno State","San Diego State","Utah State","Texas State","Army","Charlotte","East Carolina","Florida Atlantic","Liberty","Memphis","Navy","North Texas","Rice","Sam Houston","South Florida","Temple","Tulane","Tulsa","UAB","UTSA","Air Force","Hawaii","Nevada","New Mexico","North Dakota State","Northern Illinois","San Jose State","UNLV","UTEP","Wyoming","Akron","Ball State","Bowling Green","Buffalo","Central Michigan","Eastern Michigan","Kent State","Massachusetts","Miami (OH)","Middle Tennessee","Ohio","Sacramento State","Toledo","Western Kentucky","Western Michigan","Appalachian State","Arkansas State","Coastal Carolina","Georgia Southern","Georgia State","James Madison","Louisiana","UL Monroe","Marshall","Old Dominion","South Alabama","Southern Miss","Troy","Delaware","FIU","Jacksonville State","Kennesaw State","Lamar","Louisiana Tech","McNeese","Missouri State","New Mexico State","Notre Dame","UConn"];
+const ALIASES = { "Ole Miss":"Mississippi", "UConn":"Connecticut", "FIU":"Florida International", "Hawaii":"Hawai'i", "App State":"Appalachian State", "Louisiana":"Louisiana", "UL Monroe":"Louisiana Monroe", "Southern Miss":"Southern Mississippi", "Sam Houston":"Sam Houston" };
 
 const sb = (path, init = {}) =>
   fetch(`${SB_URL}/rest/v1/${path}`, { ...init, headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", ...(init.headers || {}) } });
 
+const norm = (s) => (s||"").normalize("NFKD").replace(/[^a-zA-Z0-9]/g,"").toLowerCase();
 async function loadSchools() {
-  const j = await (await fetch(ESPN_D1)).json();
-  const teams = j.sports[0].leagues[0].teams.map(t => t.team);
-  const seen = new Set(); const out = [];
-  for (const t of teams) {
-    if (!t.logos || !t.logos[0]) continue;
-    const name = (t.location && t.location.length > 1 ? t.location : t.displayName || "").replace(/"/g, "");
-    if (!name || name.length < 2 || seen.has(name)) continue;
-    seen.add(name); out.push({ name, espn: t.id });
+  const j = await (await fetch(ESPN_FB)).json();
+  const teams = j.sports[0].leagues[0].teams.map(t => t.team).filter(t => t.logos && t.logos[0]);
+  const idx = {};
+  for (const t of teams) { for (const k of [t.location, t.displayName, t.shortDisplayName]) if (k) idx[norm(k)] = idx[norm(k)] || t.id; }
+  const out = [];
+  for (const name of FBS_NAMES) {
+    let id = idx[norm(name)] || (ALIASES[name] && idx[norm(ALIASES[name])]);
+    if (!id) { const n = norm(name); const t = teams.find(x => norm(x.location||"").includes(n)); id = t && t.id; }
+    if (id) out.push({ name, espn: id });
   }
-  out.sort((a, b) => Number(a.espn) - Number(b.espn)); // stable order for deterministic daily pick
+  out.sort((a, b) => Number(a.espn) - Number(b.espn));
   return out;
 }
 
