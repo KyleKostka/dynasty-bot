@@ -11,6 +11,29 @@ const ADVANCE_CHANNEL_ID = process.env.ADVANCE_CHANNEL_ID || "151257653918144931
 const CONTACT_CHANNEL_ID = process.env.CONTACT_CHANNEL_ID || "1262125864938901557";
 const MIN_COACHES_FOR_AUTO = 2; // don't auto-advance during setup
 
+// ---- season calendar ----
+// A full cycle = 16 regular-season weeks + 4 offseason weeks + 2 preseason weeks.
+const REG_WEEKS = 16;
+const OFF_WEEKS = 4;
+const PRE_WEEKS = 2;
+const CYCLE_WEEKS = REG_WEEKS + OFF_WEEKS + PRE_WEEKS; // 22
+const OFFSEASON_START = REG_WEEKS + 1; // 17
+
+// Human label for an absolute week number within a season cycle.
+function phaseLabel(week) {
+  if (week <= REG_WEEKS) return `Week ${week}`;
+  if (week <= REG_WEEKS + OFF_WEEKS) return `Offseason — Week ${week - REG_WEEKS}`;
+  if (week <= CYCLE_WEEKS) return `Preseason — Week ${week - REG_WEEKS - OFF_WEEKS}`;
+  return `Week ${week}`; // safety net for out-of-range values
+}
+// e.g. "2027 — Week 1" / "2027 — Offseason — Week 2"
+const seasonLabel = (season, week) => `${season} — ${phaseLabel(week)}`;
+// Next (season, week), rolling into the next season after the full cycle.
+function nextSlot(season, week) {
+  const w = week + 1;
+  return w > CYCLE_WEEKS ? { season: season + 1, week: 1 } : { season, week: w };
+}
+
 const DISCORD = "https://discord.com/api/v10";
 const STATUS_EMOJI = { played: "✅", sim: "💻", forcew: "🏆" };
 const STATUS_TAG = { sim: " *(sim)*", forcew: " *(force W)*" };
@@ -42,7 +65,7 @@ async function postChannelJson(channelId, payload) {
 const editMessage = (channelId, messageId, payload) =>
   fetch(`${DISCORD}/channels/${channelId}/messages/${messageId}`, { method: "PATCH", headers: botHeaders, body: JSON.stringify(payload) });
 
-// commissioner = server admin OR member with a role named "Commissioner"
+// commissioner = server admin OR member with a role named "Commissioner"/"Commish"
 async function isCommish(body) {
   try {
     const perms = BigInt(body.member?.permissions || "0");
@@ -52,7 +75,9 @@ async function isCommish(body) {
     const r = await fetch(`${DISCORD}/guilds/${GUILD_ID}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } });
     if (!r.ok) return false;
     const all = await r.json();
-    const commish = new Set(all.filter((x) => (x.name || "").toLowerCase() === "commissioner").map((x) => x.id));
+    const commish = new Set(
+      all.filter((x) => ["commissioner", "commish"].includes((x.name || "").toLowerCase())).map((x) => x.id)
+    );
     return roles.some((rid) => commish.has(rid));
   } catch { return false; }
 }
@@ -63,8 +88,13 @@ async function getLeague() {
   const rows = r.ok ? await r.json() : [];
   return rows[0] || { season: 2027, current_week: 1 };
 }
+// Set just the week (same season) — used by /week.
 async function setWeek(week) {
   await sb("dyn_league?id=eq.1", { method: "PATCH", body: JSON.stringify({ current_week: week, updated_at: new Date().toISOString() }) });
+}
+// Set both season and week — used by /advance, /offseason, /reset-season, auto-advance.
+async function setSlot(season, week) {
+  await sb("dyn_league?id=eq.1", { method: "PATCH", body: JSON.stringify({ season, current_week: week, updated_at: new Date().toISOString() }) });
 }
 async function activeCoaches() {
   const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team&order=username.asc");
@@ -93,13 +123,17 @@ async function setAdvance(season, week, user_id, username, status) {
 async function clearWeek(season, week) {
   await sb(`dyn_advances?season=eq.${season}&week=eq.${week}`, { method: "DELETE" });
 }
+// remove every check-in/sim/force for a whole season (used by /reset-season)
+async function clearSeason(season) {
+  await sb(`dyn_advances?season=eq.${season}`, { method: "DELETE" });
+}
 // remove a single coach's check-in/sim/force for a week (used by /undo)
 async function clearCoachWeek(season, week, user_id) {
   await sb(`dyn_advances?season=eq.${season}&week=eq.${week}&user_id=eq.${user_id}`, { method: "DELETE" });
 }
 
 // ---------- advance board ----------
-function renderBoard(week, coaches, amap) {
+function renderBoard(season, week, coaches, amap) {
   const lines = coaches.map((c) => {
     const a = amap.get(c.user_id);
     const e = a ? STATUS_EMOJI[a.status] || "✅" : "⏳";
@@ -109,7 +143,7 @@ function renderBoard(week, coaches, amap) {
   const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
   const body = lines.join("\n") || "_No coaches yet — pick a team in the team-picker channel._";
   const content =
-    `🏈 **Week ${week} — Advance Board**\n${resolved}/${coaches.length} resolved\n\n${body}\n\n` +
+    `🏈 **${seasonLabel(season, week)} — Advance Board**\n${resolved}/${coaches.length} resolved\n\n${body}\n\n` +
     "Tap **✅ I've played** when your game's done. Commissioners: `/sim @coach`, `/forcew @coach`, `/advance`.";
   const components = [{ type: 1, components: [{ type: 2, style: 3, label: "I've played ✅", custom_id: "adv_done" }] }];
   return { content, components };
@@ -129,7 +163,7 @@ async function setBoardRef(season, week, channel_id, message_id) {
 async function postBoard(season, week) {
   const coaches = await activeCoaches();
   const amap = await advanceMap(season, week);
-  const msg = await postChannelJson(ADVANCE_CHANNEL_ID, renderBoard(week, coaches, amap));
+  const msg = await postChannelJson(ADVANCE_CHANNEL_ID, renderBoard(season, week, coaches, amap));
   if (msg) await setBoardRef(season, week, ADVANCE_CHANNEL_ID, msg.id);
   return msg;
 }
@@ -138,7 +172,7 @@ async function refreshBoard() {
   if (!ref || !ref.message_id) return;
   const coaches = await activeCoaches();
   const amap = await advanceMap(ref.season, ref.week);
-  await editMessage(ref.channel_id, ref.message_id, renderBoard(ref.week, coaches, amap));
+  await editMessage(ref.channel_id, ref.message_id, renderBoard(ref.season, ref.week, coaches, amap));
 }
 // advance + post a fresh board when every coach is resolved
 async function maybeAdvance() {
@@ -147,12 +181,12 @@ async function maybeAdvance() {
   const amap = await advanceMap(lg.season, lg.current_week);
   const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
   if (coaches.length >= MIN_COACHES_FOR_AUTO && resolved >= coaches.length) {
-    const next = lg.current_week + 1;
+    const nxt = nextSlot(lg.season, lg.current_week);
     await postChannel(ADVANCE_CHANNEL_ID, {
-      content: `🏁 **Week ${lg.current_week} complete!** All ${coaches.length} games resolved. Advancing to **Week ${next}**. 🏈`,
+      content: `🏁 **${seasonLabel(lg.season, lg.current_week)} complete!** All ${coaches.length} games resolved. Advancing to **${seasonLabel(nxt.season, nxt.week)}**. 🏈`,
     });
-    await setWeek(next);
-    await postBoard(lg.season, next);
+    await setSlot(nxt.season, nxt.week);
+    await postBoard(nxt.season, nxt.week);
     return true;
   }
   return false;
@@ -165,7 +199,7 @@ async function cmdDone(res, body) {
   await setAdvance(lg.season, lg.current_week, u.id, nameOf(u), "played");
   await refreshBoard();
   await maybeAdvance();
-  return reply(res, { content: `✅ **${nameOf(u)}** is in for **Week ${lg.current_week}**.` });
+  return reply(res, { content: `✅ **${nameOf(u)}** is in for **${seasonLabel(lg.season, lg.current_week)}**.` });
 }
 async function cmdStatus(res, body) {
   const lg = await getLeague();
@@ -176,7 +210,7 @@ async function cmdStatus(res, body) {
     return `${a ? STATUS_EMOJI[a.status] || "✅" : "⏳"} ${c.username || c.user_id}${a ? STATUS_TAG[a.status] || "" : ""}`;
   });
   const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
-  return ephemeral(res, { content: `📋 **Week ${lg.current_week}** — ${resolved}/${coaches.length} resolved\n${lines.join("\n") || "_No coaches yet._"}` });
+  return ephemeral(res, { content: `📋 **${seasonLabel(lg.season, lg.current_week)}** — ${resolved}/${coaches.length} resolved\n${lines.join("\n") || "_No coaches yet._"}` });
 }
 function resolvedUser(body, userId) {
   const ru = body.data?.resolved?.users?.[userId];
@@ -192,30 +226,31 @@ async function cmdSimOrForce(res, body, status, verb) {
   await setAdvance(lg.season, lg.current_week, target, tname, status);
   await refreshBoard();
   await maybeAdvance();
-  return ephemeral(res, { content: `${STATUS_EMOJI[status]} ${verb} **${tname}**'s game for Week ${lg.current_week}.` });
+  return ephemeral(res, { content: `${STATUS_EMOJI[status]} ${verb} **${tname}**'s game for ${seasonLabel(lg.season, lg.current_week)}.` });
 }
 async function cmdBoard(res, body) {
   if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
   const lg = await getLeague();
   await postBoard(lg.season, lg.current_week);
-  return ephemeral(res, { content: `Posted the Week ${lg.current_week} board in <#${ADVANCE_CHANNEL_ID}>.` });
+  return ephemeral(res, { content: `Posted the ${seasonLabel(lg.season, lg.current_week)} board in <#${ADVANCE_CHANNEL_ID}>.` });
 }
 async function cmdAdvance(res, body) {
   if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
   const lg = await getLeague();
-  const next = lg.current_week + 1;
-  await setWeek(next);
-  await postChannel(ADVANCE_CHANNEL_ID, { content: `⏭️ A commissioner advanced the league to **Week ${next}**. Play your games and tap ✅.` });
-  await postBoard(lg.season, next);
-  return ephemeral(res, { content: `Advanced to **Week ${next}**.` });
+  const nxt = nextSlot(lg.season, lg.current_week);
+  await setSlot(nxt.season, nxt.week);
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `⏭️ A commissioner advanced the league to **${seasonLabel(nxt.season, nxt.week)}**. Play your games and tap ✅.` });
+  await postBoard(nxt.season, nxt.week);
+  return ephemeral(res, { content: `Advanced to **${seasonLabel(nxt.season, nxt.week)}**.` });
 }
 async function cmdWeek(res, body) {
   if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
   const opt = (body.data.options || []).find((o) => o.name === "number");
   const wk = opt ? Number(opt.value) : null;
   if (!wk || wk < 1) return ephemeral(res, { content: "Provide a valid week number." });
+  const lg = await getLeague();
   await setWeek(wk);
-  return ephemeral(res, { content: `Set current week to **${wk}**.` });
+  return ephemeral(res, { content: `Set current week to **${seasonLabel(lg.season, wk)}** (no board posted).` });
 }
 
 // (Commissioner) Clear every check-in for the current week and refresh the board.
@@ -224,8 +259,19 @@ async function cmdResetWeek(res, body) {
   const lg = await getLeague();
   await clearWeek(lg.season, lg.current_week);
   await refreshBoard();
-  await postChannel(ADVANCE_CHANNEL_ID, { content: `♻️ A commissioner reset **Week ${lg.current_week}** — all check-ins cleared. Play your games and tap ✅ again.` });
-  return ephemeral(res, { content: `Cleared all check-ins for Week ${lg.current_week}.` });
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `♻️ A commissioner reset **${seasonLabel(lg.season, lg.current_week)}** — all check-ins cleared. Play your games and tap ✅ again.` });
+  return ephemeral(res, { content: `Cleared all check-ins for ${seasonLabel(lg.season, lg.current_week)}.` });
+}
+
+// (Commissioner) Restart the whole current season: back to Week 1, wipe ALL check-in history.
+async function cmdResetSeason(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const lg = await getLeague();
+  await clearSeason(lg.season);
+  await setSlot(lg.season, 1);
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `♻️ A commissioner **reset the ${lg.season} season** — back to **${seasonLabel(lg.season, 1)}**, all check-in history wiped. Play your games and tap ✅.` });
+  await postBoard(lg.season, 1);
+  return ephemeral(res, { content: `Reset the ${lg.season} season to Week 1 (history wiped).` });
 }
 
 // (Commissioner) Undo one coach's check-in / sim / force-win for the current week.
@@ -238,10 +284,10 @@ async function cmdUndo(res, body) {
   const lg = await getLeague();
   await clearCoachWeek(lg.season, lg.current_week, target);
   await refreshBoard();
-  return ephemeral(res, { content: `↩️ Undid **${tname}**'s status for Week ${lg.current_week} — back to ⏳.` });
+  return ephemeral(res, { content: `↩️ Undid **${tname}**'s status for ${seasonLabel(lg.season, lg.current_week)} — back to ⏳.` });
 }
 
-// (Commissioner) Jump to a specific week and post a fresh board.
+// (Commissioner) Jump to a specific week (same season) and post a fresh board.
 async function cmdGoToWeek(res, body) {
   if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
   const opt = (body.data.options || []).find((o) => o.name === "number");
@@ -249,23 +295,20 @@ async function cmdGoToWeek(res, body) {
   if (!wk || wk < 1) return ephemeral(res, { content: "Provide a valid week number." });
   const lg = await getLeague();
   await setWeek(wk);
-  await postChannel(ADVANCE_CHANNEL_ID, { content: `📍 A commissioner set the league to **Week ${wk}**. Play your games and tap ✅.` });
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `📍 A commissioner set the league to **${seasonLabel(lg.season, wk)}**. Play your games and tap ✅.` });
   await postBoard(lg.season, wk);
-  return ephemeral(res, { content: `Jumped to **Week ${wk}** and posted a fresh board.` });
+  return ephemeral(res, { content: `Jumped to **${seasonLabel(lg.season, wk)}** and posted a fresh board.` });
 }
 
-// (Commissioner) Run the offseason — advance several weeks at once (default 4).
+// (Commissioner) Kick off the offseason — jump to the start of the offseason phase.
 async function cmdOffseason(res, body) {
   if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
-  const opt = (body.data.options || []).find((o) => o.name === "weeks");
-  const raw = opt ? Number(opt.value) : 4;
-  const step = (!raw || raw < 1) ? 4 : raw;
   const lg = await getLeague();
-  const next = lg.current_week + step;
-  await setWeek(next);
-  await postChannel(ADVANCE_CHANNEL_ID, { content: `🌴 **Offseason** — advanced ${step} week${step === 1 ? "" : "s"} (recruiting, transfers, etc.). Now on **Week ${next}**. 🏈` });
-  await postBoard(lg.season, next);
-  return ephemeral(res, { content: `Ran offseason: +${step} → Week ${next}.` });
+  const wk = OFFSEASON_START; // first offseason week
+  await setSlot(lg.season, wk);
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `🌴 **Offseason has begun** for **${lg.season}** — recruiting, transfer portal, the works. Now on **${seasonLabel(lg.season, wk)}**. 🏈` });
+  await postBoard(lg.season, wk);
+  return ephemeral(res, { content: `Jumped to the offseason: **${seasonLabel(lg.season, wk)}**.` });
 }
 
 async function cmdMyteam(res, body) {
@@ -352,7 +395,7 @@ async function handleAdvDone(res, body) {
   await setAdvance(lg.season, lg.current_week, u.id, nameOf(u), "played");
   const coaches = await activeCoaches();
   const amap = await advanceMap(lg.season, lg.current_week);
-  const rendered = renderBoard(lg.current_week, coaches, amap); // re-render the week this board represents
+  const rendered = renderBoard(lg.season, lg.current_week, coaches, amap); // re-render the week this board represents
   await maybeAdvance(); // may post a fresh board for the next week as a new message
   return updateMsg(res, rendered);
 }
@@ -416,6 +459,7 @@ export default async function handler(req, res) {
       if (name === "advance") return await cmdAdvance(res, body);
       if (name === "week") return await cmdWeek(res, body);
       if (name === "reset-week") return await cmdResetWeek(res, body);
+      if (name === "reset-season") return await cmdResetSeason(res, body);
       if (name === "go-to-week") return await cmdGoToWeek(res, body);
       if (name === "undo") return await cmdUndo(res, body);
       if (name === "offseason") return await cmdOffseason(res, body);

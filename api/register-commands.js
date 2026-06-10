@@ -21,9 +21,10 @@ const COMMANDS = [
 
   // --- step-back / control commands ---
   { name: "reset-week", description: "(Commissioner) Clear all check-ins for the current week", type: 1 },
-  { name: "go-to-week", description: "(Commissioner) Jump to a specific week and post a fresh board", type: 1, options: [{ name: "number", description: "Week number", type: 4, required: true }] },
+  { name: "reset-season", description: "(Commissioner) Restart this season at Week 1 and wipe all check-in history", type: 1 },
+  { name: "go-to-week", description: "(Commissioner) Jump to a week (1-16 reg, 17-20 offseason, 21-22 preseason)", type: 1, options: [{ name: "number", description: "Week number (1-22)", type: 4, required: true }] },
   { name: "undo", description: "(Commissioner) Undo a coach's check-in / sim / force-win this week", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
-  { name: "offseason", description: "(Commissioner) Advance several weeks at once (default 4)", type: 1, options: [{ name: "weeks", description: "How many weeks (default 4)", type: 4, required: false }] },
+  { name: "offseason", description: "(Commissioner) Kick off the offseason phase for the current season", type: 1 },
 
   // --- self-service contact list ---
   { name: "setinfo", description: "Set your gamertag and/or timezone for the contact list", type: 1, options: [
