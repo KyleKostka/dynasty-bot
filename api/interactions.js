@@ -104,6 +104,16 @@ async function isCommish(body) {
   } catch { return false; }
 }
 
+// Role IDs for the commissioner role(s) — used to @mention them on auto-advance.
+async function commishRoleIds() {
+  try {
+    const r = await fetch(`${DISCORD}/guilds/${GUILD_ID}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } });
+    if (!r.ok) return [];
+    const all = await r.json();
+    return all.filter((x) => ["commissioner", "commish"].includes((x.name || "").toLowerCase())).map((x) => x.id);
+  } catch { return []; }
+}
+
 // ---------- league data ----------
 async function getLeague() {
   const r = await sb("dyn_league?id=eq.1&select=season,current_week");
@@ -204,8 +214,11 @@ async function maybeAdvance() {
   const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
   if (coaches.length >= MIN_COACHES_FOR_AUTO && resolved >= coaches.length) {
     const nxt = nextSlot(lg.season, lg.current_week);
+    const ids = await commishRoleIds();
+    const ping = ids.map((id) => `<@&${id}>`).join(" ");
     await postChannel(ADVANCE_CHANNEL_ID, {
-      content: `🏁 **${seasonLabel(lg.season, lg.current_week)} complete!** All ${coaches.length} games resolved. Advancing to **${seasonLabel(nxt.season, nxt.week)}**. 🏈`,
+      content: `🏁 **${seasonLabel(lg.season, lg.current_week)} complete!** All ${coaches.length} are in.${ping ? ` ${ping} —` : ""} you're clear to **advance in-game** (or double-check). Now rolling to **${seasonLabel(nxt.season, nxt.week)}**. 🏈`,
+      allowed_mentions: { roles: ids },
     });
     await setSlot(nxt.season, nxt.week);
     await postBoard(nxt.season, nxt.week);
@@ -406,7 +419,10 @@ async function cmdSetInfo(res, body) {
 // /contacts — (Commissioner) post/repost the live contact list message.
 async function cmdContacts(res, body) {
   if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
-  await postContacts();
+  const msg = await postContacts();
+  if (!msg) {
+    return ephemeral(res, { content: `⚠️ Couldn't post to <#${CONTACT_CHANNEL_ID}>. Give the **Dynasty Picker** bot **View Channel + Send Messages + Embed Links** there, then try again.` });
+  }
   return ephemeral(res, { content: `Posted the live contact list in <#${CONTACT_CHANNEL_ID}>.` });
 }
 
