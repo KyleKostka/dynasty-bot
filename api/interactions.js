@@ -9,6 +9,7 @@ const SB_URL = process.env.SUPABASE_URL;
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const ADVANCE_CHANNEL_ID = process.env.ADVANCE_CHANNEL_ID || "1512576539181449316";
 const CONTACT_CHANNEL_ID = process.env.CONTACT_CHANNEL_ID || "1262125864938901557";
+const LEAGUE_CHAT_ID = process.env.LEAGUE_CHAT_ID || "1257724499562856552";
 const MIN_COACHES_FOR_AUTO = 2; // don't auto-advance during setup
 
 // ---- season calendar (CFB 26 dynasty) ----
@@ -376,7 +377,7 @@ function contactModal(prefill = {}) {
         field("gamertag", "Gamertag / PSN / Xbox name", prefill.gamertag, true, "e.g. KostkaKyle", 60),
         field("team", "NCAA team", prefill.team, true, "e.g. Hawaii", 60),
         field("phone", "Phone (optional)", prefill.phone, false, "(555) 123-4567", 30),
-        field("tz", "Timezone (optional)", prefill.tz, false, "e.g. CT, EST", 20),
+        field("tz", "Timezone (needed for scheduling)", prefill.tz, true, "e.g. CT, EST", 20),
       ],
     },
   };
@@ -490,6 +491,84 @@ async function cmdContactCard(res, body) {
   return ephemeral(res, { content: "Posted the contact-setup button in this channel. 📌 Pin it!" });
 }
 
+// ---------- /schedule (propose times → opponent locks one in) ----------
+async function insertGame(g) {
+  const r = await sb("dyn_games", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(g) });
+  const rows = r.ok ? await r.json() : [];
+  return rows[0] || null;
+}
+async function getGameByMessage(messageId) {
+  if (!messageId) return null;
+  const r = await sb(`dyn_games?message_id=eq.${messageId}&select=*`);
+  const rows = r.ok ? await r.json() : [];
+  return rows[0] || null;
+}
+
+// /schedule opponent:@coach times:"a, b, c" — posts a proposal with a button per time slot.
+async function cmdSchedule(res, body) {
+  const u = userOf(body);
+  const opts = body.data.options || [];
+  const opponentId = opts.find((o) => o.name === "opponent")?.value;
+  const timesRaw = opts.find((o) => o.name === "times")?.value || "";
+  if (!opponentId) return ephemeral(res, { content: "Pick an opponent." });
+  if (opponentId === u.id) return ephemeral(res, { content: "You can't schedule against yourself. 🙂" });
+  const oppName = resolvedUser(body, opponentId);
+  const slots = timesRaw.split(/[,;]+/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
+  if (!slots.length) {
+    return ephemeral(res, { content: "List your time options separated by commas — e.g. `today 7pm CT, today 8pm CT, tomorrow 5pm CT`." });
+  }
+  const game = await insertGame({
+    proposer_id: u.id, proposer_name: nameOf(u),
+    opponent_id: opponentId, opponent_name: oppName,
+    slots, status: "proposed", channel_id: LEAGUE_CHAT_ID,
+  });
+  if (!game) return ephemeral(res, { content: "Couldn't save the proposal — try again." });
+  const slotButtons = slots.map((s, i) => ({ type: 2, style: 1, label: s.slice(0, 80), custom_id: `sched:${i}` }));
+  const components = [
+    { type: 1, components: slotButtons },
+    { type: 1, components: [{ type: 2, style: 4, label: "None of these work", custom_id: "sched:none" }] },
+  ];
+  const msg = await postChannelJson(LEAGUE_CHAT_ID, {
+    content: `🗓️ **Game proposal** — <@${u.id}> vs <@${opponentId}>\n<@${opponentId}>, tap the time that works for you:`,
+    allowed_mentions: { users: [opponentId] },
+    components,
+  });
+  if (!msg) return ephemeral(res, { content: `⚠️ Couldn't post to <#${LEAGUE_CHAT_ID}> — make sure the bot can post there.` });
+  await sb(`dyn_games?id=eq.${game.id}`, { method: "PATCH", body: JSON.stringify({ message_id: msg.id }) });
+  return ephemeral(res, { content: `Sent your proposal to <@${opponentId}> in <#${LEAGUE_CHAT_ID}>. They'll pick a time to lock it in.` });
+}
+
+// Opponent taps a slot (or "none") on a proposal message.
+async function handleScheduleClick(res, body) {
+  const cid = body.data?.custom_id || "";
+  const game = await getGameByMessage(body.message?.id);
+  if (!game || game.status !== "proposed") {
+    return ephemeral(res, { content: "This proposal is no longer active." });
+  }
+  const clicker = userOf(body).id;
+  if (clicker !== game.opponent_id) {
+    return ephemeral(res, { content: `Only <@${game.opponent_id}> can respond to this proposal.` });
+  }
+  if (cid === "sched:none") {
+    await sb(`dyn_games?id=eq.${game.id}`, { method: "PATCH", body: JSON.stringify({ status: "declined" }) });
+    await postChannel(game.channel_id, {
+      content: `❌ <@${game.proposer_id}> — none of those worked for <@${game.opponent_id}>. Propose new times with \`/schedule\`.`,
+      allowed_mentions: { users: [game.proposer_id] },
+    });
+    return updateMsg(res, { content: `❌ ~~Game proposal — <@${game.proposer_id}> vs <@${game.opponent_id}>~~ (none worked)`, components: [] });
+  }
+  const idx = parseInt(cid.split(":")[1], 10);
+  const slots = Array.isArray(game.slots) ? game.slots : [];
+  const chosen = slots[idx];
+  if (chosen == null) return ephemeral(res, { content: "That option is no longer available." });
+  await sb(`dyn_games?id=eq.${game.id}`, { method: "PATCH", body: JSON.stringify({ status: "locked", chosen }) });
+  await postChannel(game.channel_id, {
+    content: `✅ <@${game.proposer_id}> — <@${game.opponent_id}> locked in **${chosen}**! 🏈`,
+    allowed_mentions: { users: [game.proposer_id, game.opponent_id] },
+  });
+  return updateMsg(res, { content: `✅ **Locked in!** <@${game.proposer_id}> vs <@${game.opponent_id}> — **${chosen}** 🏈`, components: [] });
+}
+
 // ---------- ✅ check-in button ----------
 async function handleAdvDone(res, body) {
   const u = userOf(body);
@@ -578,6 +657,7 @@ export default async function handler(req, res) {
       if (name === "setinfo") return await cmdSetInfo(res, body);
       if (name === "contacts") return await cmdContacts(res, body);
       if (name === "contactcard") return await cmdContactCard(res, body);
+      if (name === "schedule") return await cmdSchedule(res, body);
     } catch (e) {
       return ephemeral(res, { content: "Something went wrong: " + String(e).slice(0, 150) });
     }
@@ -587,6 +667,7 @@ export default async function handler(req, res) {
   if (body.type === 3) {
     const cid = body.data?.custom_id || "";
     if (cid === "adv_done") return await handleAdvDone(res, body);
+    if (cid.startsWith("sched:")) return await handleScheduleClick(res, body);
     if (cid === "contact_open") {
       const uid = userOf(body).id;
       return sendModal(res, await getCoachPrefill(uid));

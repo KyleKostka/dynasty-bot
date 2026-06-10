@@ -7,8 +7,8 @@ const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const SETUP_SECRET = process.env.SETUP_SECRET;
 
-// type 1 = CHAT_INPUT (slash). option type 4 = INTEGER, type 6 = USER.
-// Commissioner gating is enforced in code (admin or "Commissioner" role).
+// type 1 = CHAT_INPUT (slash). option type 3 = STRING, 4 = INTEGER, 6 = USER.
+// Commissioner gating is enforced in code (admin or "Commissioner"/"Commish" role).
 const COMMANDS = [
   { name: "done", description: "Mark yourself done (played) for the current week", type: 1 },
   { name: "status", description: "See the current advance status", type: 1 },
@@ -16,7 +16,7 @@ const COMMANDS = [
   { name: "board", description: "(Commissioner) Post the weekly advance board", type: 1 },
   { name: "sim", description: "(Commissioner) Mark a coach's game as simmed", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
   { name: "forcew", description: "(Commissioner) Give a coach a force win", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
-  { name: "advance", description: "(Commissioner) Force-advance to the next week", type: 1 },
+  { name: "advance", description: "(Commissioner) Force-advance to the next stage", type: 1 },
   { name: "week", description: "(Commissioner) Set the current stage # without posting a board", type: 1, options: [{ name: "number", description: "Stage # (1-32)", type: 4, required: true }] },
 
   // --- step-back / control commands ---
@@ -30,6 +30,12 @@ const COMMANDS = [
   { name: "setinfo", description: "Set up / update your contact info (name, gamertag, team, phone, timezone)", type: 1 },
   { name: "contacts", description: "(Commissioner) Post the live contact list", type: 1 },
   { name: "contactcard", description: "(Commissioner) Post the 'Set up my contact info' button in this channel", type: 1 },
+
+  // --- scheduling ---
+  { name: "schedule", description: "Propose game times to an opponent — they tap one to lock it in", type: 1, options: [
+    { name: "opponent", description: "Who you want to play", type: 6, required: true },
+    { name: "times", description: "Time options, comma-separated (e.g. today 7pm CT, tomorrow 5pm CT)", type: 3, required: true },
+  ] },
 ];
 
 export default async function handler(req, res) {
