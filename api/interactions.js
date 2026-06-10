@@ -130,7 +130,7 @@ async function setSlot(season, week) {
   await sb("dyn_league?id=eq.1", { method: "PATCH", body: JSON.stringify({ season, current_week: week, updated_at: new Date().toISOString() }) });
 }
 async function activeCoaches() {
-  const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team&order=username.asc");
+  const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team,away&order=username.asc");
   return r.ok ? await r.json() : [];
 }
 async function advanceMap(season, week) {
@@ -146,6 +146,7 @@ async function setAdvance(season, week, user_id, username, status) {
     headers: { Prefer: "resolution=ignore-duplicates" },
     body: JSON.stringify({ user_id, username, active: true }),
   });
+  await sb(`dyn_coaches?user_id=eq.${user_id}`, { method: "PATCH", body: JSON.stringify({ away: false }) }); // checking in = you're back
   await sb("dyn_advances?on_conflict=season,week,user_id", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
@@ -169,14 +170,16 @@ async function clearCoachWeek(season, week, user_id) {
 function renderBoard(season, week, coaches, amap) {
   const lines = coaches.map((c) => {
     const a = amap.get(c.user_id);
+    if (c.away && !a) return `💤 ${c.username || c.user_id} *(away)*`;
     const e = a ? STATUS_EMOJI[a.status] || "✅" : "⏳";
     const tag = a ? STATUS_TAG[a.status] || "" : "";
     return `${e} ${c.username || c.user_id}${tag}`;
   });
-  const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
+  const needed = coaches.filter((c) => !c.away);
+  const resolved = needed.filter((c) => amap.has(c.user_id)).length;
   const body = lines.join("\n") || "_No coaches yet — pick a team in the team-picker channel._";
   const content =
-    `🏈 **${seasonLabel(season, week)} — Advance Board**\n${resolved}/${coaches.length} resolved\n\n${body}\n\n` +
+    `🏈 **${seasonLabel(season, week)} — Advance Board**\n${resolved}/${needed.length} resolved\n\n${body}\n\n` +
     "Tap **✅ I've played** when your game's done. Commissioners: `/sim @coach`, `/forcew @coach`, `/advance`.";
   const components = [{ type: 1, components: [{ type: 2, style: 3, label: "I've played ✅", custom_id: "adv_done" }] }];
   return { content, components };
@@ -212,13 +215,14 @@ async function maybeAdvance() {
   const lg = await getLeague();
   const coaches = await activeCoaches();
   const amap = await advanceMap(lg.season, lg.current_week);
-  const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
-  if (coaches.length >= MIN_COACHES_FOR_AUTO && resolved >= coaches.length) {
+  const needed = coaches.filter((c) => !c.away);
+  const resolved = needed.filter((c) => amap.has(c.user_id)).length;
+  if (needed.length >= MIN_COACHES_FOR_AUTO && resolved >= needed.length) {
     const nxt = nextSlot(lg.season, lg.current_week);
     const ids = await commishRoleIds();
     const ping = ids.map((id) => `<@&${id}>`).join(" ");
     await postChannel(ADVANCE_CHANNEL_ID, {
-      content: `🏁 **${seasonLabel(lg.season, lg.current_week)} complete!** All ${coaches.length} are in.${ping ? ` ${ping} —` : ""} you're clear to **advance in-game** (or double-check). Now rolling to **${seasonLabel(nxt.season, nxt.week)}**. 🏈`,
+      content: `🏁 **${seasonLabel(lg.season, lg.current_week)} complete!** All ${needed.length} are in.${ping ? ` ${ping} —` : ""} you're clear to **advance in-game** (or double-check). Now rolling to **${seasonLabel(nxt.season, nxt.week)}**. 🏈`,
       allowed_mentions: { roles: ids },
     });
     await setSlot(nxt.season, nxt.week);
@@ -243,10 +247,12 @@ async function cmdStatus(res, body) {
   const amap = await advanceMap(lg.season, lg.current_week);
   const lines = coaches.map((c) => {
     const a = amap.get(c.user_id);
+    if (c.away && !a) return `💤 ${c.username || c.user_id} *(away)*`;
     return `${a ? STATUS_EMOJI[a.status] || "✅" : "⏳"} ${c.username || c.user_id}${a ? STATUS_TAG[a.status] || "" : ""}`;
   });
-  const resolved = coaches.filter((c) => amap.has(c.user_id)).length;
-  return ephemeral(res, { content: `📋 **${seasonLabel(lg.season, lg.current_week)}** — ${resolved}/${coaches.length} resolved\n${lines.join("\n") || "_No coaches yet._"}` });
+  const needed = coaches.filter((c) => !c.away);
+  const resolved = needed.filter((c) => amap.has(c.user_id)).length;
+  return ephemeral(res, { content: `📋 **${seasonLabel(lg.season, lg.current_week)}** — ${resolved}/${needed.length} resolved\n${lines.join("\n") || "_No coaches yet._"}` });
 }
 function resolvedUser(body, userId) {
   const ru = body.data?.resolved?.users?.[userId];
@@ -353,6 +359,119 @@ async function cmdMyteam(res, body) {
   const rows = r.ok ? await r.json() : [];
   const team = rows[0]?.team;
   return ephemeral(res, { content: team ? `Your team: **${team}**` : "You haven't picked a team yet — use the team-picker dropdowns." });
+}
+
+// /away — toggle your away status (skipped on the board + auto-advance; auto-clears when you check in).
+async function cmdAway(res, body) {
+  const u = userOf(body);
+  const r = await sb(`dyn_coaches?user_id=eq.${u.id}&select=away`);
+  const rows = r.ok ? await r.json() : [];
+  const wasAway = rows[0]?.away === true;
+  await sb("dyn_coaches?on_conflict=user_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ user_id: u.id, username: nameOf(u), active: true, away: !wasAway }),
+  });
+  await refreshBoard();
+  return ephemeral(res, {
+    content: wasAway
+      ? "✅ Welcome back — you're off **away** and back on the board."
+      : "💤 You're marked **away** — you won't block advances or get nudged. Run `/away` again (or `/done`) when you're back.",
+  });
+}
+
+// /wheel — pick one option at random.
+async function cmdWheel(res, body) {
+  const raw = (body.data.options || []).find((o) => o.name === "options")?.value || "";
+  const opts = raw.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+  if (opts.length < 2) return ephemeral(res, { content: "Give at least 2 options, comma-separated — e.g. `/wheel options: Alabama, LSU, Georgia`." });
+  const pick = opts[Math.floor(Math.random() * opts.length)];
+  return reply(res, { content: `🎡 Spinning: ${opts.join(" · ")}\n\n🎯 The wheel landed on **${pick}**!` });
+}
+
+// /help — list the commands the caller can use (commissioner extras only shown to commissioners).
+async function cmdHelp(res, body) {
+  const everyone = [
+    "**/done** — mark yourself played for the current week",
+    "**/status** — see who's checked in this week",
+    "**/myteam** — show your team",
+    "**/setinfo** — set up / update your contact info",
+    "**/schedule** `@opponent` `times` — propose game times; they lock one in",
+    "**/away** — toggle your away status",
+    "**/poll** `question` `choices` — start a quick vote",
+    "**/wheel** `options` — pick one at random",
+    "**/help** — this list",
+  ];
+  const commish = [
+    "**/board** — post the advance board",
+    "**/sim** `@coach` · **/forcew** `@coach` — sim / force-win a coach",
+    "**/advance** — advance to the next stage",
+    "**/go-to-week** `#` — jump to a stage + post a board",
+    "**/week** `#` — set the stage (no board)",
+    "**/reset-week** — clear this week's check-ins",
+    "**/reset-season** — restart the season at Week 1 (wipes history)",
+    "**/undo** `@coach` — undo a coach's status this week",
+    "**/offseason** — jump to the offseason phase",
+    "**/contacts** — post the live contact list",
+    "**/contactcard** — post the contact-setup button",
+  ];
+  let content = `🏈 **Dynasty Bot — commands**\n\n${everyone.join("\n")}`;
+  if (await isCommish(body)) content += `\n\n**Commissioner only:**\n${commish.join("\n")}`;
+  return ephemeral(res, { content });
+}
+
+// ---------- /poll ----------
+async function insertPoll(p) {
+  const r = await sb("dyn_polls", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(p) });
+  const rows = r.ok ? await r.json() : [];
+  return rows[0] || null;
+}
+async function getPollByMessage(messageId) {
+  if (!messageId) return null;
+  const r = await sb(`dyn_polls?message_id=eq.${messageId}&select=*`);
+  const rows = r.ok ? await r.json() : [];
+  return rows[0] || null;
+}
+async function pollTally(messageId, nChoices) {
+  const r = await sb(`dyn_poll_votes?message_id=eq.${messageId}&select=choice_idx`);
+  const rows = r.ok ? await r.json() : [];
+  const counts = new Array(nChoices).fill(0);
+  for (const v of rows) if (counts[v.choice_idx] != null) counts[v.choice_idx]++;
+  return counts;
+}
+function renderPoll(question, choices, counts) {
+  const total = counts.reduce((a, b) => a + b, 0);
+  const lines = choices.map((c, i) => `**${c}** — ${counts[i] || 0}`);
+  return `📊 **${question}**\n\n${lines.join("\n")}\n\n_${total} vote${total === 1 ? "" : "s"} · tap to vote (one each, changeable)_`;
+}
+async function cmdPoll(res, body) {
+  const opts = body.data.options || [];
+  const question = (opts.find((o) => o.name === "question")?.value || "").trim();
+  const raw = opts.find((o) => o.name === "choices")?.value || "";
+  const choices = raw.split(/[,;]+/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
+  if (!question) return ephemeral(res, { content: "Give a question." });
+  if (choices.length < 2) return ephemeral(res, { content: "Give at least 2 choices, comma-separated." });
+  const channelId = body.channel_id || body.channel?.id;
+  const components = [{ type: 1, components: choices.map((c, i) => ({ type: 2, style: 1, label: c.slice(0, 80), custom_id: `poll:${i}` })) }];
+  const msg = await postChannelJson(channelId, { content: renderPoll(question, choices, new Array(choices.length).fill(0)), components });
+  if (!msg) return ephemeral(res, { content: "Couldn't post the poll here — check the bot's permissions." });
+  await insertPoll({ message_id: msg.id, channel_id: channelId, question, choices, created_by: userOf(body).id });
+  return ephemeral(res, { content: "📊 Poll posted!" });
+}
+async function handlePollVote(res, body) {
+  const cid = body.data?.custom_id || "";
+  const poll = await getPollByMessage(body.message?.id);
+  if (!poll) return ephemeral(res, { content: "This poll is no longer active." });
+  const idx = parseInt(cid.split(":")[1], 10);
+  const choices = Array.isArray(poll.choices) ? poll.choices : [];
+  if (choices[idx] == null) return ephemeral(res, { content: "That choice is gone." });
+  await sb("dyn_poll_votes?on_conflict=message_id,user_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ message_id: poll.message_id, user_id: userOf(body).id, choice_idx: idx, voted_at: new Date().toISOString() }),
+  });
+  const counts = await pollTally(poll.message_id, choices.length);
+  return updateMsg(res, { content: renderPoll(poll.question, choices, counts), components: body.message.components });
 }
 
 // ---------- contact list ----------
@@ -658,6 +777,10 @@ export default async function handler(req, res) {
       if (name === "contacts") return await cmdContacts(res, body);
       if (name === "contactcard") return await cmdContactCard(res, body);
       if (name === "schedule") return await cmdSchedule(res, body);
+      if (name === "away") return await cmdAway(res, body);
+      if (name === "poll") return await cmdPoll(res, body);
+      if (name === "wheel") return await cmdWheel(res, body);
+      if (name === "help") return await cmdHelp(res, body);
     } catch (e) {
       return ephemeral(res, { content: "Something went wrong: " + String(e).slice(0, 150) });
     }
@@ -668,6 +791,7 @@ export default async function handler(req, res) {
     const cid = body.data?.custom_id || "";
     if (cid === "adv_done") return await handleAdvDone(res, body);
     if (cid.startsWith("sched:")) return await handleScheduleClick(res, body);
+    if (cid.startsWith("poll:")) return await handlePollVote(res, body);
     if (cid === "contact_open") {
       const uid = userOf(body).id;
       return sendModal(res, await getCoachPrefill(uid));

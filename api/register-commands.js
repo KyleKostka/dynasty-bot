@@ -36,6 +36,17 @@ const COMMANDS = [
     { name: "opponent", description: "Who you want to play", type: 6, required: true },
     { name: "times", description: "Time options, comma-separated (e.g. today 7pm CT, tomorrow 5pm CT)", type: 3, required: true },
   ] },
+
+  // --- utility / fun ---
+  { name: "away", description: "Toggle your away status (skipped on the board until you're back)", type: 1 },
+  { name: "poll", description: "Start a quick vote with up to 5 choices", type: 1, options: [
+    { name: "question", description: "What are we voting on?", type: 3, required: true },
+    { name: "choices", description: "Choices, comma-separated (2-5)", type: 3, required: true },
+  ] },
+  { name: "wheel", description: "Pick one option at random", type: 1, options: [
+    { name: "options", description: "Options, comma-separated (e.g. Alabama, LSU, Georgia)", type: 3, required: true },
+  ] },
+  { name: "help", description: "List the bot's commands", type: 1 },
 ];
 
 export default async function handler(req, res) {
