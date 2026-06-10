@@ -235,7 +235,7 @@ async function cmdDone(res, body) {
   await setAdvance(lg.season, lg.current_week, u.id, nameOf(u), "played");
   await refreshBoard();
   await maybeAdvance();
-  return reply(res, { content: `✅ **${nameOf(u)}** is in for **${seasonLabel(lg.season, lg.current_week)}**.` });
+  return ephemeral(res, { content: `✅ You're in for **${seasonLabel(lg.season, lg.current_week)}** — the board's updated in <#${ADVANCE_CHANNEL_ID}>.` });
 }
 async function cmdStatus(res, body) {
   const lg = await getLeague();
