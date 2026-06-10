@@ -17,7 +17,20 @@ const COMMANDS = [
   { name: "sim", description: "(Commissioner) Mark a coach's game as simmed", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
   { name: "forcew", description: "(Commissioner) Give a coach a force win", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
   { name: "advance", description: "(Commissioner) Force-advance to the next week", type: 1 },
-  { name: "week", description: "(Commissioner) Set the current week", type: 1, options: [{ name: "number", description: "Week number", type: 4, required: true }] },
+  { name: "week", description: "(Commissioner) Set the current week (no board post)", type: 1, options: [{ name: "number", description: "Week number", type: 4, required: true }] },
+
+  // --- step-back / control commands ---
+  { name: "reset-week", description: "(Commissioner) Clear all check-ins for the current week", type: 1 },
+  { name: "go-to-week", description: "(Commissioner) Jump to a specific week and post a fresh board", type: 1, options: [{ name: "number", description: "Week number", type: 4, required: true }] },
+  { name: "undo", description: "(Commissioner) Undo a coach's check-in / sim / force-win this week", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
+  { name: "offseason", description: "(Commissioner) Advance several weeks at once (default 4)", type: 1, options: [{ name: "weeks", description: "How many weeks (default 4)", type: 4, required: false }] },
+
+  // --- self-service contact list ---
+  { name: "setinfo", description: "Set your gamertag and/or timezone for the contact list", type: 1, options: [
+    { name: "gamertag", description: "Your gamertag / PSN / Xbox name", type: 3, required: false },
+    { name: "timezone", description: "Your timezone (e.g. CT, EST)", type: 3, required: false },
+  ] },
+  { name: "contacts", description: "(Commissioner) Post the live contact list", type: 1 },
 ];
 
 export default async function handler(req, res) {

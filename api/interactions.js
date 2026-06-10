@@ -8,6 +8,7 @@ const GUILD_ID = process.env.GUILD_ID;
 const SB_URL = process.env.SUPABASE_URL;
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const ADVANCE_CHANNEL_ID = process.env.ADVANCE_CHANNEL_ID || "1512576539181449316";
+const CONTACT_CHANNEL_ID = process.env.CONTACT_CHANNEL_ID || "1262125864938901557";
 const MIN_COACHES_FOR_AUTO = 2; // don't auto-advance during setup
 
 const DISCORD = "https://discord.com/api/v10";
@@ -87,6 +88,14 @@ async function setAdvance(season, week, user_id, username, status) {
     headers: { Prefer: "resolution=merge-duplicates" },
     body: JSON.stringify({ season, week, user_id, username, status, advanced_at: new Date().toISOString() }),
   });
+}
+// remove every check-in/sim/force for a week (used by /reset-week)
+async function clearWeek(season, week) {
+  await sb(`dyn_advances?season=eq.${season}&week=eq.${week}`, { method: "DELETE" });
+}
+// remove a single coach's check-in/sim/force for a week (used by /undo)
+async function clearCoachWeek(season, week, user_id) {
+  await sb(`dyn_advances?season=eq.${season}&week=eq.${week}&user_id=eq.${user_id}`, { method: "DELETE" });
 }
 
 // ---------- advance board ----------
@@ -208,12 +217,132 @@ async function cmdWeek(res, body) {
   await setWeek(wk);
   return ephemeral(res, { content: `Set current week to **${wk}**.` });
 }
+
+// (Commissioner) Clear every check-in for the current week and refresh the board.
+async function cmdResetWeek(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const lg = await getLeague();
+  await clearWeek(lg.season, lg.current_week);
+  await refreshBoard();
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `♻️ A commissioner reset **Week ${lg.current_week}** — all check-ins cleared. Play your games and tap ✅ again.` });
+  return ephemeral(res, { content: `Cleared all check-ins for Week ${lg.current_week}.` });
+}
+
+// (Commissioner) Undo one coach's check-in / sim / force-win for the current week.
+async function cmdUndo(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const opt = (body.data.options || []).find((o) => o.name === "coach");
+  const target = opt?.value;
+  if (!target) return ephemeral(res, { content: "Pick a coach." });
+  const tname = resolvedUser(body, target);
+  const lg = await getLeague();
+  await clearCoachWeek(lg.season, lg.current_week, target);
+  await refreshBoard();
+  return ephemeral(res, { content: `↩️ Undid **${tname}**'s status for Week ${lg.current_week} — back to ⏳.` });
+}
+
+// (Commissioner) Jump to a specific week and post a fresh board.
+async function cmdGoToWeek(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const opt = (body.data.options || []).find((o) => o.name === "number");
+  const wk = opt ? Number(opt.value) : null;
+  if (!wk || wk < 1) return ephemeral(res, { content: "Provide a valid week number." });
+  const lg = await getLeague();
+  await setWeek(wk);
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `📍 A commissioner set the league to **Week ${wk}**. Play your games and tap ✅.` });
+  await postBoard(lg.season, wk);
+  return ephemeral(res, { content: `Jumped to **Week ${wk}** and posted a fresh board.` });
+}
+
+// (Commissioner) Run the offseason — advance several weeks at once (default 4).
+async function cmdOffseason(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const opt = (body.data.options || []).find((o) => o.name === "weeks");
+  const raw = opt ? Number(opt.value) : 4;
+  const step = (!raw || raw < 1) ? 4 : raw;
+  const lg = await getLeague();
+  const next = lg.current_week + step;
+  await setWeek(next);
+  await postChannel(ADVANCE_CHANNEL_ID, { content: `🌴 **Offseason** — advanced ${step} week${step === 1 ? "" : "s"} (recruiting, transfers, etc.). Now on **Week ${next}**. 🏈` });
+  await postBoard(lg.season, next);
+  return ephemeral(res, { content: `Ran offseason: +${step} → Week ${next}.` });
+}
+
 async function cmdMyteam(res, body) {
   const u = userOf(body);
   const r = await sb(`dyn_coaches?user_id=eq.${u.id}&select=team`);
   const rows = r.ok ? await r.json() : [];
   const team = rows[0]?.team;
   return ephemeral(res, { content: team ? `Your team: **${team}**` : "You haven't picked a team yet — use the team-picker dropdowns." });
+}
+
+// ---------- contact list ----------
+function renderContacts(coaches) {
+  const lines = coaches.map((c) => {
+    const team = c.team || "no team yet";
+    const gt = c.gamertag ? `🎮 ${c.gamertag}` : "🎮 —";
+    const tz = c.tz ? `🕐 ${c.tz}` : "🕐 —";
+    return `**${c.username || c.user_id}** — ${team} · ${gt} · ${tz}`;
+  });
+  const body = lines.join("\n") || "_No coaches yet._";
+  return { content: `📇 **League Contact List**\nUpdate yours anytime with \`/setinfo\`.\n\n${body}` };
+}
+async function contactCoaches() {
+  const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team,gamertag,tz&order=username.asc");
+  return r.ok ? await r.json() : [];
+}
+async function getContactRef() {
+  const r = await sb("dyn_contact?id=eq.1&select=channel_id,message_id");
+  const rows = r.ok ? await r.json() : [];
+  return rows[0] || null;
+}
+async function setContactRef(channel_id, message_id) {
+  await sb("dyn_contact?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ id: 1, channel_id, message_id, updated_at: new Date().toISOString() }),
+  });
+}
+async function postContacts() {
+  const coaches = await contactCoaches();
+  const msg = await postChannelJson(CONTACT_CHANNEL_ID, renderContacts(coaches));
+  if (msg) await setContactRef(CONTACT_CHANNEL_ID, msg.id);
+  return msg;
+}
+async function refreshContacts() {
+  const ref = await getContactRef();
+  if (!ref || !ref.message_id) return;
+  const coaches = await contactCoaches();
+  await editMessage(ref.channel_id, ref.message_id, renderContacts(coaches));
+}
+
+// /setinfo — a coach sets their own gamertag / timezone; refreshes the live list.
+async function cmdSetInfo(res, body) {
+  const u = userOf(body);
+  const opts = body.data.options || [];
+  const gamertag = opts.find((o) => o.name === "gamertag")?.value;
+  const timezone = opts.find((o) => o.name === "timezone")?.value;
+  if (gamertag == null && timezone == null) {
+    return ephemeral(res, { content: "Give a gamertag and/or timezone, e.g. `/setinfo gamertag: KostkaKyle timezone: CT`." });
+  }
+  const patch = { user_id: u.id, username: nameOf(u), active: true };
+  if (gamertag != null) patch.gamertag = gamertag;
+  if (timezone != null) patch.tz = timezone;
+  await sb("dyn_coaches?on_conflict=user_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(patch),
+  });
+  await refreshContacts();
+  const bits = [gamertag != null ? `🎮 ${gamertag}` : null, timezone != null ? `🕐 ${timezone}` : null].filter(Boolean).join(" · ");
+  return ephemeral(res, { content: `Saved your info: ${bits}` });
+}
+
+// /contacts — (Commissioner) post/repost the live contact list message.
+async function cmdContacts(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  await postContacts();
+  return ephemeral(res, { content: `Posted the live contact list in <#${CONTACT_CHANNEL_ID}>.` });
 }
 
 // ---------- ✅ check-in button ----------
@@ -286,6 +415,12 @@ export default async function handler(req, res) {
       if (name === "forcew") return await cmdSimOrForce(res, body, "forcew", "Force-win for");
       if (name === "advance") return await cmdAdvance(res, body);
       if (name === "week") return await cmdWeek(res, body);
+      if (name === "reset-week") return await cmdResetWeek(res, body);
+      if (name === "go-to-week") return await cmdGoToWeek(res, body);
+      if (name === "undo") return await cmdUndo(res, body);
+      if (name === "offseason") return await cmdOffseason(res, body);
+      if (name === "setinfo") return await cmdSetInfo(res, body);
+      if (name === "contacts") return await cmdContacts(res, body);
     } catch (e) {
       return ephemeral(res, { content: "Something went wrong: " + String(e).slice(0, 150) });
     }
