@@ -17,12 +17,12 @@ const COMMANDS = [
   { name: "sim", description: "(Commissioner) Mark a coach's game as simmed", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
   { name: "forcew", description: "(Commissioner) Give a coach a force win", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
   { name: "advance", description: "(Commissioner) Force-advance to the next week", type: 1 },
-  { name: "week", description: "(Commissioner) Set the current week (no board post)", type: 1, options: [{ name: "number", description: "Week number", type: 4, required: true }] },
+  { name: "week", description: "(Commissioner) Set the current stage # without posting a board", type: 1, options: [{ name: "number", description: "Stage # (1-32)", type: 4, required: true }] },
 
   // --- step-back / control commands ---
   { name: "reset-week", description: "(Commissioner) Clear all check-ins for the current week", type: 1 },
   { name: "reset-season", description: "(Commissioner) Restart this season at Week 1 and wipe all check-in history", type: 1 },
-  { name: "go-to-week", description: "(Commissioner) Jump to a week (1-16 reg, 17-20 offseason, 21-22 preseason)", type: 1, options: [{ name: "number", description: "Week number (1-22)", type: 4, required: true }] },
+  { name: "go-to-week", description: "(Commissioner) Jump to a stage # (1-14 reg, 15 conf, 16-20 playoff, 21-32 offseason)", type: 1, options: [{ name: "number", description: "Stage # (1-32)", type: 4, required: true }] },
   { name: "undo", description: "(Commissioner) Undo a coach's check-in / sim / force-win this week", type: 1, options: [{ name: "coach", description: "The coach", type: 6, required: true }] },
   { name: "offseason", description: "(Commissioner) Kick off the offseason phase for the current season", type: 1 },
 

@@ -11,24 +11,46 @@ const ADVANCE_CHANNEL_ID = process.env.ADVANCE_CHANNEL_ID || "151257653918144931
 const CONTACT_CHANNEL_ID = process.env.CONTACT_CHANNEL_ID || "1262125864938901557";
 const MIN_COACHES_FOR_AUTO = 2; // don't auto-advance during setup
 
-// ---- season calendar ----
-// A full cycle = 16 regular-season weeks + 4 offseason weeks + 2 preseason weeks.
-const REG_WEEKS = 16;
-const OFF_WEEKS = 4;
-const PRE_WEEKS = 2;
-const CYCLE_WEEKS = REG_WEEKS + OFF_WEEKS + PRE_WEEKS; // 22
-const OFFSEASON_START = REG_WEEKS + 1; // 17
+// ---- season calendar (CFB 26 dynasty) ----
+// The season is an ordered list of "stages". current_week is a 1-based index into STAGES.
+const REG_SEASON_WEEKS = 14; // regular season: Week 1 .. Week 14 (Week 14 = rivalry week)
+const POSTSEASON = [
+  "Conference Championships",
+  "Bowl Season",
+  "CFP First Round",
+  "CFP Quarterfinals",
+  "CFP Semifinals",
+  "National Championship",
+];
+const OFFSEASON = [
+  "Coaching Carousel",
+  "Players Leaving",
+  "Transfer Portal",
+  "Recruiting — Week 1",
+  "Recruiting — Week 2",
+  "Recruiting — Week 3",
+  "Recruiting — Week 4",
+  "National Signing Day",
+  "Position Changes",
+  "Training Results",
+  "Roster Cuts",
+  "Preseason",
+];
+const STAGES = [
+  ...Array.from({ length: REG_SEASON_WEEKS }, (_, i) => `Week ${i + 1}`),
+  ...POSTSEASON,
+  ...OFFSEASON,
+];
+const CYCLE_WEEKS = STAGES.length; // 32 stages per season
+const OFFSEASON_START = REG_SEASON_WEEKS + POSTSEASON.length + 1; // 21 = "Coaching Carousel"
 
-// Human label for an absolute week number within a season cycle.
+// Human label for a stage index within a season.
 function phaseLabel(week) {
-  if (week <= REG_WEEKS) return `Week ${week}`;
-  if (week <= REG_WEEKS + OFF_WEEKS) return `Offseason — Week ${week - REG_WEEKS}`;
-  if (week <= CYCLE_WEEKS) return `Preseason — Week ${week - REG_WEEKS - OFF_WEEKS}`;
-  return `Week ${week}`; // safety net for out-of-range values
+  return STAGES[week - 1] || `Week ${week}`; // safety net for out-of-range values
 }
-// e.g. "2027 — Week 1" / "2027 — Offseason — Week 2"
+// e.g. "2027 — Week 1" / "2027 — Conference Championships" / "2027 — Transfer Portal"
 const seasonLabel = (season, week) => `${season} — ${phaseLabel(week)}`;
-// Next (season, week), rolling into the next season after the full cycle.
+// Next (season, week), rolling into the next season after the final stage.
 function nextSlot(season, week) {
   const w = week + 1;
   return w > CYCLE_WEEKS ? { season: season + 1, week: 1 } : { season, week: w };
