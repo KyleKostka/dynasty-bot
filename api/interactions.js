@@ -355,18 +355,56 @@ async function cmdMyteam(res, body) {
 }
 
 // ---------- contact list ----------
+// Build the contact-info modal (a pop-up form). Prefilled with existing values when available.
+function contactModal(prefill = {}) {
+  const field = (id, label, value, required, placeholder, max) => ({
+    type: 1,
+    components: [{
+      type: 4, custom_id: id, label, style: 1, required: !!required,
+      ...(value ? { value: String(value).slice(0, max || 100) } : {}),
+      ...(placeholder ? { placeholder } : {}),
+      max_length: max || 100,
+    }],
+  });
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id: "contact_form",
+      title: "League Contact Info",
+      components: [
+        field("first_name", "First name", prefill.first_name, true, "e.g. Kyle", 60),
+        field("gamertag", "Gamertag / PSN / Xbox name", prefill.gamertag, true, "e.g. KostkaKyle", 60),
+        field("team", "NCAA team", prefill.team, true, "e.g. Hawaii", 60),
+        field("phone", "Phone (optional)", prefill.phone, false, "(555) 123-4567", 30),
+        field("tz", "Timezone (optional)", prefill.tz, false, "e.g. CT, EST", 20),
+      ],
+    },
+  };
+}
+const sendModal = (res, prefill) => res.status(200).json(contactModal(prefill));
+
+// Fetch a coach's saved contact fields to prefill the form.
+async function getCoachPrefill(userId) {
+  const r = await sb(`dyn_coaches?user_id=eq.${userId}&select=first_name,gamertag,team,phone,tz`);
+  const rows = r.ok ? await r.json() : [];
+  return rows[0] || {};
+}
+
 function renderContacts(coaches) {
   const lines = coaches.map((c) => {
+    const name = c.first_name || c.username || c.user_id;
+    const handle = c.username ? ` (@${c.username})` : "";
     const team = c.team || "no team yet";
-    const gt = c.gamertag ? `🎮 ${c.gamertag}` : "🎮 —";
-    const tz = c.tz ? `🕐 ${c.tz}` : "🕐 —";
-    return `**${c.username || c.user_id}** — ${team} · ${gt} · ${tz}`;
+    const parts = [`🎮 ${c.gamertag || "—"}`];
+    if (c.phone) parts.push(`📱 ${c.phone}`);
+    if (c.tz) parts.push(`🕐 ${c.tz}`);
+    return `**${name}**${handle} — ${team} · ${parts.join(" · ")}`;
   });
   const body = lines.join("\n") || "_No coaches yet._";
-  return { content: `📇 **League Contact List**\nUpdate yours anytime with \`/setinfo\`.\n\n${body}` };
+  return { content: `📇 **League Contact List**\nSet up or update yours with \`/setinfo\` or the **Set up my contact info** button in #start-here.\n\n${body}` };
 }
 async function contactCoaches() {
-  const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team,gamertag,tz&order=username.asc");
+  const r = await sb("dyn_coaches?active=eq.true&select=user_id,username,team,gamertag,tz,first_name,phone&order=username.asc");
   return r.ok ? await r.json() : [];
 }
 async function getContactRef() {
@@ -394,26 +432,39 @@ async function refreshContacts() {
   await editMessage(ref.channel_id, ref.message_id, renderContacts(coaches));
 }
 
-// /setinfo — a coach sets their own gamertag / timezone; refreshes the live list.
+// /setinfo — open the contact-info form (prefilled with whatever the coach already saved).
 async function cmdSetInfo(res, body) {
   const u = userOf(body);
-  const opts = body.data.options || [];
-  const gamertag = opts.find((o) => o.name === "gamertag")?.value;
-  const timezone = opts.find((o) => o.name === "timezone")?.value;
-  if (gamertag == null && timezone == null) {
-    return ephemeral(res, { content: "Give a gamertag and/or timezone, e.g. `/setinfo gamertag: KostkaKyle timezone: CT`." });
-  }
+  const prefill = await getCoachPrefill(u.id);
+  return sendModal(res, prefill);
+}
+
+// Save the submitted contact form, then refresh the live list.
+async function handleContactModal(res, body) {
+  const u = userOf(body);
+  const rows = body.data?.components || [];
+  const get = (id) => {
+    for (const row of rows) for (const c of row.components || []) if (c.custom_id === id) return (c.value || "").trim();
+    return "";
+  };
+  const first_name = get("first_name");
+  const gamertag = get("gamertag");
+  const team = get("team");
+  const phone = get("phone");
+  const tz = get("tz");
   const patch = { user_id: u.id, username: nameOf(u), active: true };
-  if (gamertag != null) patch.gamertag = gamertag;
-  if (timezone != null) patch.tz = timezone;
+  if (first_name) patch.first_name = first_name;
+  if (gamertag) patch.gamertag = gamertag;
+  if (team) patch.team = team;
+  if (phone) patch.phone = phone;
+  if (tz) patch.tz = tz;
   await sb("dyn_coaches?on_conflict=user_id", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
     body: JSON.stringify(patch),
   });
   await refreshContacts();
-  const bits = [gamertag != null ? `🎮 ${gamertag}` : null, timezone != null ? `🕐 ${timezone}` : null].filter(Boolean).join(" · ");
-  return ephemeral(res, { content: `Saved your info: ${bits}` });
+  return ephemeral(res, { content: `✅ Contact info saved${first_name ? `, thanks ${first_name}` : ""}!` });
 }
 
 // /contacts — (Commissioner) post/repost the live contact list message.
@@ -424,6 +475,19 @@ async function cmdContacts(res, body) {
     return ephemeral(res, { content: `⚠️ Couldn't post to <#${CONTACT_CHANNEL_ID}>. Give the **Dynasty Picker** bot **View Channel + Send Messages + Embed Links** there, then try again.` });
   }
   return ephemeral(res, { content: `Posted the live contact list in <#${CONTACT_CHANNEL_ID}>.` });
+}
+
+// /contactcard — (Commissioner) post a "Set up my contact info" button in the current channel (e.g. #start-here).
+async function cmdContactCard(res, body) {
+  if (!(await isCommish(body))) return ephemeral(res, { content: "🔒 Commissioners only." });
+  const channelId = body.channel_id || body.channel?.id;
+  const payload = {
+    content: "👋 **Welcome!** Set up your league contact info — first name, gamertag, your NCAA team, and (optionally) phone & timezone. Tap below:",
+    components: [{ type: 1, components: [{ type: 2, style: 1, label: "Set up my contact info 📋", custom_id: "contact_open" }] }],
+  };
+  const msg = await postChannelJson(channelId, payload);
+  if (!msg) return ephemeral(res, { content: "⚠️ Couldn't post here — make sure the bot has Send Messages here." });
+  return ephemeral(res, { content: "Posted the contact-setup button in this channel. 📌 Pin it!" });
 }
 
 // ---------- ✅ check-in button ----------
@@ -440,8 +504,9 @@ async function handleAdvDone(res, body) {
 
 // ---------- team picker (select menu) ----------
 async function handleTeamPick(res, body) {
+  const userId = body.member?.user?.id;
+  let addedLabel = null;
   try {
-    const userId = body.member?.user?.id;
     const username = nameOf(body.member?.user || {});
     const have = new Set(body.member?.roles || []);
     const values = body.data?.values || [];
@@ -458,6 +523,7 @@ async function handleTeamPick(res, body) {
         headers: { Authorization: `Bot ${BOT_TOKEN}`, "X-Audit-Log-Reason": "Team picker" },
       });
       if (!had) {
+        addedLabel = labelFor(roleId) || addedLabel;
         await sb("dyn_coaches?on_conflict=user_id", {
           method: "POST",
           headers: { Prefer: "resolution=merge-duplicates" },
@@ -466,6 +532,14 @@ async function handleTeamPick(res, body) {
       }
     }
   } catch { /* fall through */ }
+  // First time a coach picks a team, pop the contact form (prefilled with their team).
+  if (addedLabel && userId) {
+    const prefill = await getCoachPrefill(userId);
+    if (!prefill.first_name) {
+      prefill.team = prefill.team || addedLabel;
+      return sendModal(res, prefill);
+    }
+  }
   return res.status(200).json({ type: 7, data: { content: body.message.content, components: body.message.components } });
 }
 
@@ -503,6 +577,7 @@ export default async function handler(req, res) {
       if (name === "offseason") return await cmdOffseason(res, body);
       if (name === "setinfo") return await cmdSetInfo(res, body);
       if (name === "contacts") return await cmdContacts(res, body);
+      if (name === "contactcard") return await cmdContactCard(res, body);
     } catch (e) {
       return ephemeral(res, { content: "Something went wrong: " + String(e).slice(0, 150) });
     }
@@ -512,7 +587,16 @@ export default async function handler(req, res) {
   if (body.type === 3) {
     const cid = body.data?.custom_id || "";
     if (cid === "adv_done") return await handleAdvDone(res, body);
+    if (cid === "contact_open") {
+      const uid = userOf(body).id;
+      return sendModal(res, await getCoachPrefill(uid));
+    }
     return await handleTeamPick(res, body);
+  }
+
+  if (body.type === 5) { // MODAL_SUBMIT
+    if (body.data?.custom_id === "contact_form") return await handleContactModal(res, body);
+    return ephemeral(res, { content: "Unknown form." });
   }
 
   res.status(200).json({ type: 4, data: { flags: 64, content: "Unsupported interaction." } });

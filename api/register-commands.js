@@ -27,11 +27,9 @@ const COMMANDS = [
   { name: "offseason", description: "(Commissioner) Kick off the offseason phase for the current season", type: 1 },
 
   // --- self-service contact list ---
-  { name: "setinfo", description: "Set your gamertag and/or timezone for the contact list", type: 1, options: [
-    { name: "gamertag", description: "Your gamertag / PSN / Xbox name", type: 3, required: false },
-    { name: "timezone", description: "Your timezone (e.g. CT, EST)", type: 3, required: false },
-  ] },
+  { name: "setinfo", description: "Set up / update your contact info (name, gamertag, team, phone, timezone)", type: 1 },
   { name: "contacts", description: "(Commissioner) Post the live contact list", type: 1 },
+  { name: "contactcard", description: "(Commissioner) Post the 'Set up my contact info' button in this channel", type: 1 },
 ];
 
 export default async function handler(req, res) {
