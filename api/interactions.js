@@ -515,11 +515,10 @@ function renderContacts(coaches) {
   const lines = coaches.map((c) => {
     const name = c.first_name || c.username || c.user_id;
     const handle = c.username ? ` (@${c.username})` : "";
-    const team = c.team || "no team yet";
     const parts = [`🎮 ${c.gamertag || "—"}`];
     if (c.phone) parts.push(`📱 ${c.phone}`);
     if (c.tz) parts.push(`🕐 ${c.tz}`);
-    return `**${name}**${handle} — ${team} · ${parts.join(" · ")}`;
+    return `**${name}**${handle} — ${parts.join(" · ")}`; // team hidden until team selection
   });
   const body = lines.join("\n") || "_No coaches yet._";
   return { content: `📇 **League Contact List**\nSet up or update yours with \`/setinfo\` or the **Set up my contact info** button in #start-here.\n\n${body}` };
