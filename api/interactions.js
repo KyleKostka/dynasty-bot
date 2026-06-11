@@ -383,10 +383,11 @@ async function cmdAway(res, body) {
 // /wheel — pick one option at random.
 async function cmdWheel(res, body) {
   const raw = (body.data.options || []).find((o) => o.name === "options")?.value || "";
-  const opts = raw.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+  const opts = raw.split(/[,;]+/).map((s) => s.trim()).filter(Boolean).slice(0, 100); // up to 100 options
   if (opts.length < 2) return ephemeral(res, { content: "Give at least 2 options, comma-separated — e.g. `/wheel options: Alabama, LSU, Georgia`." });
   const pick = opts[Math.floor(Math.random() * opts.length)];
-  return reply(res, { content: `🎡 Spinning: ${opts.join(" · ")}\n\n🎯 The wheel landed on **${pick}**!` });
+  const list = opts.length <= 15 ? opts.join(" · ") : `**${opts.length}** options`; // don't dump 100 into one message
+  return reply(res, { content: `🎡 Spinning ${list}…\n\n🎯 The wheel landed on **${pick}**!` });
 }
 
 // /help — list the commands the caller can use (commissioner extras only shown to commissioners).

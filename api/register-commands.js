@@ -44,7 +44,7 @@ const COMMANDS = [
     { name: "choices", description: "Choices, comma-separated (2-5)", type: 3, required: true },
   ] },
   { name: "wheel", description: "Pick one option at random", type: 1, options: [
-    { name: "options", description: "Options, comma-separated (e.g. Alabama, LSU, Georgia)", type: 3, required: true },
+    { name: "options", description: "Options, comma-separated — up to 100 (e.g. Alabama, LSU, Georgia)", type: 3, required: true },
   ] },
   { name: "help", description: "List the bot's commands", type: 1 },
 ];
