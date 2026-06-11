@@ -27,12 +27,12 @@ const COACHES = [
   { handle: "Kilch",      first_name: "John Kilchenman", gamertag: "Kilch5",        team: "Washington State", phone: "(952) 913-2512", tz: "CT" },
   { handle: "Kostka30",   first_name: "Kyle Kostka",     gamertag: "Kostka30",      team: "Arkansas",         phone: "(218) 838-3530", tz: "MT" },
   { handle: "Lokensgard", first_name: "Tom Lokensgard",  gamertag: "TLokes16",      team: "UCF",              phone: "",               tz: "" },
-  { handle: "Mccauley75", first_name: "Alan McCaulley",  gamertag: "McCaulley75",   team: "SMU",              phone: "(507) 696-3597", tz: "CT" },
+  { handle: "Mccaulley69", first_name: "Alan McCaulley", gamertag: "McCaulley75",   team: "SMU",              phone: "(507) 696-3597", tz: "CT" },
   { handle: "RickFly3",   first_name: "Nick Bly",        gamertag: "RickFly3",      team: "Baylor",           phone: "(507) 696-3968", tz: "CT" },
-  { handle: "Rusty",      first_name: "Tom Glackin",     gamertag: "Floyd Manpine", team: "UCLA",             phone: "(717) 283-9133", tz: "ET" },
+  { handle: "Rusty Shackleford", first_name: "Tom Glackin", gamertag: "Floyd Manpine", team: "UCLA",          phone: "(717) 283-9133", tz: "ET" },
   { handle: "tkort",      first_name: "TJ Korthour",     gamertag: "tkort",         team: "Minnesota",        phone: "(605) 881-6395", tz: "CT" },
   { handle: "Tots",       first_name: "Josh Jenson",     gamertag: "Zinged",        team: "Mizzou",           phone: "(320) 282-6832", tz: "CT" },
-  { handle: "Waytravel5", first_name: "Wille Fust",      gamertag: "Bill6923",      team: "Purdue",           phone: "(763) 898-2653", tz: "CT" },
+  { handle: "Lou Holtz's Ghost", first_name: "Wille Fust", gamertag: "Bill6923",    team: "Purdue",           phone: "(763) 898-2653", tz: "CT" },
 ];
 
 async function allMembers() {
