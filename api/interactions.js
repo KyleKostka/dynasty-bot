@@ -624,6 +624,50 @@ async function getGameByMessage(messageId) {
   return rows[0] || null;
 }
 
+// ---- best-effort time parsing for reminders ----
+const TZMAP = {
+  et: "America/New_York", est: "America/New_York", edt: "America/New_York", eastern: "America/New_York",
+  ct: "America/Chicago", cst: "America/Chicago", cdt: "America/Chicago", central: "America/Chicago",
+  mt: "America/Denver", mst: "America/Denver", mdt: "America/Denver", mountain: "America/Denver",
+  pt: "America/Los_Angeles", pst: "America/Los_Angeles", pdt: "America/Los_Angeles", pacific: "America/Los_Angeles",
+};
+function zoneOffsetMs(date, tz) {
+  const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    .formatToParts(date).reduce((a, x) => { a[x.type] = x.value; return a; }, {});
+  const h = p.hour === "24" ? "00" : p.hour;
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +h, +p.minute, +p.second) - date.getTime();
+}
+function localToUtcISO(y, moIdx, d, h, mi, tz) {
+  const guess = Date.UTC(y, moIdx, d, h, mi, 0);
+  return new Date(guess - zoneOffsetMs(new Date(guess), tz)).toISOString();
+}
+// Parse a slot string like "today 7pm CT" / "tomorrow 5:30pm" / "Sun 8pm EST" → ISO timestamp (or null).
+function parseGameTime(text, fallbackTz) {
+  try {
+    const s = (text || "").toLowerCase();
+    let tz = TZMAP[(fallbackTz || "").toLowerCase()] || "America/Chicago";
+    const tzm = s.match(/\b(edt|est|et|eastern|cdt|cst|ct|central|mdt|mst|mt|mountain|pdt|pst|pt|pacific)\b/);
+    if (tzm) tz = TZMAP[tzm[1]] || tz;
+    const tm = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/);
+    if (!tm) return null;
+    let hour = parseInt(tm[1], 10);
+    const min = tm[2] ? parseInt(tm[2], 10) : 0;
+    if (tm[3] === "pm" && hour < 12) hour += 12;
+    if (tm[3] === "am" && hour === 12) hour = 0;
+    const tp = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" })
+      .formatToParts(new Date()).reduce((a, x) => { a[x.type] = x.value; return a; }, {});
+    const y = +tp.year, mo = +tp.month, d = +tp.day;
+    let addDays = 0;
+    if (s.includes("tomorrow")) addDays = 1;
+    else {
+      const days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+      const wd = days.findIndex((n) => s.includes(n) || new RegExp(`\\b${n.slice(0, 3)}\\b`).test(s));
+      if (wd >= 0) addDays = (wd - new Date(Date.UTC(y, mo - 1, d)).getUTCDay() + 7) % 7;
+    }
+    return localToUtcISO(y, mo - 1, d + addDays, hour, min, tz);
+  } catch { return null; }
+}
+
 // /schedule opponent:@coach times:"a, b, c" — posts a proposal with a button per time slot.
 async function cmdSchedule(res, body) {
   const u = userOf(body);
@@ -681,7 +725,9 @@ async function handleScheduleClick(res, body) {
   const slots = Array.isArray(game.slots) ? game.slots : [];
   const chosen = slots[idx];
   if (chosen == null) return ephemeral(res, { content: "That option is no longer available." });
-  await sb(`dyn_games?id=eq.${game.id}`, { method: "PATCH", body: JSON.stringify({ status: "locked", chosen }) });
+  const oppTz = (await getCoachPrefill(game.opponent_id)).tz;
+  const gameTime = parseGameTime(chosen, oppTz); // ISO or null; null = no timed reminder
+  await sb(`dyn_games?id=eq.${game.id}`, { method: "PATCH", body: JSON.stringify({ status: "locked", chosen, game_time: gameTime, reminded: false }) });
   await postChannel(game.channel_id, {
     content: `✅ <@${game.proposer_id}> — <@${game.opponent_id}> locked in **${chosen}**! 🏈`,
     allowed_mentions: { users: [game.proposer_id, game.opponent_id] },
