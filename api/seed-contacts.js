@@ -32,7 +32,7 @@ const COACHES = [
   { handle: "Rusty Shackleford", first_name: "Tom Glackin", gamertag: "Floyd Manpine", team: "UCLA",          phone: "(717) 283-9133", tz: "ET" },
   { handle: "tkort",      first_name: "TJ Korthour",     gamertag: "tkort",         team: "Minnesota",        phone: "(605) 881-6395", tz: "CT" },
   { handle: "Tots",       first_name: "Josh Jenson",     gamertag: "Zinged",        team: "Mizzou",           phone: "(320) 282-6832", tz: "CT" },
-  { handle: "Lou Holtz's Ghost", first_name: "Wille Fust", gamertag: "Bill6923",    team: "Purdue",           phone: "(763) 898-2653", tz: "CT" },
+  { handle: "waytravel56696", first_name: "Wille Fust",  gamertag: "Bill6923",      team: "Purdue",           phone: "(763) 898-2653", tz: "CT", alt: "Lou Holtz's Ghost" },
 ];
 
 async function allMembers() {
@@ -60,12 +60,15 @@ export default async function handler(req, res) {
     res.status(500).json({ error: "Couldn't fetch members — turn on the bot's Server Members Intent in the Discord Developer Portal, then try again.", detail: mres.error });
     return;
   }
-  const norm = (s) => (s || "").toLowerCase().trim();
-  const find = (h) => mres.members.find((m) => [m.user && m.user.username, m.user && m.user.global_name, m.nick].map(norm).includes(norm(h)));
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); // ignore spaces/punctuation/apostrophes
+  const find = (c) => mres.members.find((m) => {
+    const names = [m.user && m.user.username, m.user && m.user.global_name, m.nick].map(norm);
+    return names.includes(norm(c.handle)) || (c.alt && names.includes(norm(c.alt)));
+  });
 
   const seeded = [], skipped = [];
   for (const c of COACHES) {
-    const m = find(c.handle);
+    const m = find(c);
     const user_id = m ? m.user.id : KNOWN[norm(c.handle)];
     if (!user_id) { skipped.push(c.handle); continue; }
     const username = m ? (m.user.global_name || m.user.username) : c.handle;
