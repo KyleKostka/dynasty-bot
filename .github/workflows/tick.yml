@@ -1,0 +1,19 @@
+name: Dynasty cron (reminders + nudge)
+
+# Fires game reminders (~30 min before) and the daily "still owe your game" nudge.
+# Runs every 15 minutes; also runnable on-demand from the Actions tab.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit cron endpoint
+        run: |
+          code=$(curl -s -o /tmp/out.txt -w "%{http_code}" "${{ secrets.CRON_URL }}")
+          echo "HTTP $code"
+          cat /tmp/out.txt
+          test "$code" = "200"
